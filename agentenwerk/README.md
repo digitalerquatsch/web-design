@@ -85,6 +85,8 @@ Damit dein Agent deine Projekte kennt, zum Beispiel als Berater auf deiner Agent
 3. Im Testchat rechts fragen, ob die Antworten stimmen. Der Agent nutzt nur, was eingelesen wurde.
 4. Änderungen am Repository kommen mit **Aktualisieren** an. **Entfernen** nimmt ein Projekt wieder aus dem Wissen.
 
+**Fertig für deine sieben Projekte:** Auf der Seite **Agenten** legt der Button **Agent mit meinen Projekten** einen fertigen Agenten „Quatsch-Bot“ an. Er kennt JARVIS, ScrapeGraphAI samt Dokumentation, die Higgsfield-Skills, beide Webdesign-Skills und Nano-Banana MCP, jeweils mit Zusammenfassung, Funktionen, Anleitung und Fragen. Die Vorlage steht in `public/examples/mein-agent.json` und wurde aus den READMEs der Repos geschrieben. Wo ein Repository laut README eine Kopie eines fremden Projekts ist, sagt der Agent das offen. Name, Firma, Farbe und Begrüßung passt du im Editor an. Mit **Aktualisieren** liest du jedes Projekt später frisch von GitHub ein.
+
 Öffentliche Repositories brauchen keinen Zugang. Für **private** Repositories und mehr Abrufe: unter **System → GitHub (Projekte)** einen Token eintragen (GitHub → Settings → Developer settings → Fine-grained token, nur lesen für die gewünschten Repos). Gelesen wird ausschließlich über `api.github.com`: README, Hauptverzeichnis und wenige Dateien wie `CLAUDE.md`, `SKILL.md`, `AGENTS.md`. Quellcode wird nicht gelesen. Ein Import zählt als eine Website-Analyse im Monatskontingent. README-Texte behandelt die KI als Material, nicht als Anweisung.
 
 Hinweis: Alles, was im README steht, kann der Agent Besuchern erzählen. Bei privaten Repositories also nur einlesen, was öffentlich werden darf.

@@ -97,3 +97,27 @@ test("import endpoint: admin route, quota, private-repo token, stored sanitized"
   s.close();
   await fs.rm(dir, { recursive: true, force: true });
 });
+
+test("the ready-made 'Agent mit meinen Projekten' is valid and accepted by the server", async () => {
+  const raw = JSON.parse(await fs.readFile(new URL("../public/examples/mein-agent.json", import.meta.url), "utf8"));
+  const cfg = withDefaults(raw);
+  assert.equal(cfg.projects.length, 7);
+  assert.deepEqual(cfg.projects.map((p) => p.repo).sort(), ["digitalerquatsch/Nano-Banana-MCP", "digitalerquatsch/Scrapegraph-ai", "digitalerquatsch/claude-skill-webdesigner", "digitalerquatsch/docusaurus-docs", "digitalerquatsch/higgsfield-claude-skills", "digitalerquatsch/jarvis", "digitalerquatsch/web-design"]);
+  for (const p of cfg.projects) assert.ok(p.summary && p.features.length && p.faqs.length, p.repo);
+  const prompt = buildPrompt(cfg);
+  assert.match(prompt, /Quelle laut README: das Projekt ScrapeGraphAI/);
+  assert.match(prompt, /Sag offen, wenn ein Projekt laut README ursprünglich von anderen stammt/);
+
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "agentenwerk-seed-"));
+  const s = http.createServer(createApp({ dataDir: dir, ai: { configured: false } }));
+  await new Promise((r) => s.listen(0, "127.0.0.1", r));
+  const u = `http://localhost:${s.address().port}`;
+  const H = { "x-agentenwerk": "1", "content-type": "application/json" };
+  delete raw.format;
+  const saved = await (await fetch(`${u}/api/agents`, { method: "POST", headers: H, body: JSON.stringify(withDefaults(raw)) })).json();
+  assert.equal(saved.projects.length, 7, "no project is dropped by validation");
+  assert.equal(saved.projects[0].features.length, 6);
+  assert.equal(saved.widgetTheme, "dark");
+  s.close();
+  await fs.rm(dir, { recursive: true, force: true });
+});

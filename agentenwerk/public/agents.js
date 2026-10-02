@@ -37,7 +37,7 @@ export function agentCard({ h, icon, a, status, onEdit }) {
         h("button", { type: "button", class: "btn", onclick: () => onEdit(a.id) }, icon("edit", 16), "Bearbeiten"))));
 }
 
-export function mountAgents({ root, api, h, icon, getStatus, onNew, onEdit }) {
+export function mountAgents({ root, api, h, icon, getStatus, onNew, onEdit, onSeed }) {
   let agents = [];
   let query = "";
   let goal = "alle";
@@ -65,7 +65,9 @@ export function mountAgents({ root, api, h, icon, getStatus, onNew, onEdit }) {
     root.replaceChildren(
       h("div", { class: "page-head" },
         h("div", null, h("span", { class: "eyebrow", text: isKunde() ? "Dein Zugang" : "Übersicht" }), h("h2", { text: `Deine Agenten (${agents.length})` })),
-        h("div", { class: "toolbar" }, search, isKunde() ? null : h("button", { type: "button", class: "btn primary", onclick: onNew }, icon("plus", 16), "Agent erstellen"))),
+        h("div", { class: "toolbar" }, search,
+          isKunde() || !onSeed ? null : h("button", { type: "button", class: "btn", title: "Legt einen fertigen Agenten an, der deine 7 GitHub-Projekte kennt", onclick: onSeed }, icon("rocket", 16), "Agent mit meinen Projekten"),
+          isKunde() ? null : h("button", { type: "button", class: "btn primary", onclick: onNew }, icon("plus", 16), "Agent erstellen"))),
       agents.length > 3 ? h("div", { class: "chips" }, chip("alle", "Alle", agents.length), Object.entries(GOAL_BADGE).filter(([k]) => counts[k]).map(([k, v]) => chip(k, v, counts[k]))) : null,
       agents.length || !isKunde()
         ? h("div", { class: "agent-grid", id: "agGrid" }, renderGrid())

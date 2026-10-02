@@ -806,7 +806,23 @@ const autopilotView = mountAutopilot({ root: $("autopilotView"), api, h, headers
 const acquisitionView = mountAcquisition({ root: $("acquisitionView"), api, h, getStatus: () => status, openAgent: openAgentById, onReview: (o) => startReview({ ...o, from: "acquisition" }) });
 const usersView = mountUsers({ root: $("usersView"), api, h, getStatus: () => status, onChange: refreshStatus });
 const homeView = mountHome({ root: $("homeView"), api, h, icon, getStatus: () => status, go: (v) => showView(v), onNew: newAgent, onEdit: openAgentById });
-const agentsView = mountAgents({ root: $("agentsView"), api, h, icon, getStatus: () => status, onNew: newAgent, onEdit: openAgentById });
+// A ready-made agent that knows the seven GitHub projects (public/examples/mein-agent.json).
+async function seedProjectsAgent() {
+  try {
+    const res = await fetch("/examples/mein-agent.json");
+    if (!res.ok) throw new Error("Die Vorlage wurde nicht gefunden.");
+    const o = await res.json();
+    delete o.format; delete o.id;
+    const saved = await api("POST", "/api/agents", withDefaults(o));
+    agents = await api("GET", "/api/agents");
+    await openAgentById(saved.id);
+    section = "wissen"; renderRail(); renderForm();
+  } catch (e) {
+    if (!(e instanceof AuthError)) alert_(e.message);
+  }
+}
+function alert_(text) { const b = $("banner"); b.replaceChildren(h("p", { text })); b.hidden = false; }
+const agentsView = mountAgents({ root: $("agentsView"), api, h, icon, getStatus: () => status, onNew: newAgent, onEdit: openAgentById, onSeed: seedProjectsAgent });
 
 const systemView = mountSystem({ root: $("systemView"), api, h, icon, onSaved: refreshStatus });
 const accountView = mountAccount({ root: $("accountView"), api, h, icon, getStatus: () => status });
