@@ -26,6 +26,7 @@ export const BASE = {
   color: "#3a46c9", position: "right", welcome: "Hallo! Wie kann ich Ihnen helfen?", quickReplies: [], initials: "",
   logoUrl: "", widgetTitle: "", widgetTheme: "light",
   phoneEnabled: false, phoneGreeting: "",
+  integrations: [], // outgoing targets: [{id, type, enabled, events, to, chatId, has, hint}]
   projects: [], // GitHub projects the agent knows: [{repo, url, name, summary, features, usage, tech, faqs, importedAt}]
   promptOverride: null,
   allowedOrigins: [],
@@ -108,7 +109,7 @@ export function fromTemplate(key) {
 // never break the prompt builder.
 export function withDefaults(cfg) {
   const out = { ...clone(BASE), ...(cfg || {}) };
-  for (const k of ["tone", "faqs", "leadFields", "quickReplies", "allowedOrigins", "projects"]) if (!Array.isArray(out[k])) out[k] = clone(BASE[k]);
+  for (const k of ["tone", "faqs", "leadFields", "quickReplies", "allowedOrigins", "projects", "integrations"]) if (!Array.isArray(out[k])) out[k] = clone(BASE[k]);
   out.projects = out.projects.filter((p) => p && typeof p.repo === "string" && typeof p.summary === "string");
   for (const k of ["name", "company", "industry", "website", "role", "knowledge", "hours", "services", "bookingRules", "handoff", "dos", "donts", "privacyUrl", "welcome", "initials", "logoUrl", "widgetTitle", "phoneGreeting"]) if (typeof out[k] !== "string") out[k] = "";
   if (out.widgetTheme !== "dark") out.widgetTheme = "light";

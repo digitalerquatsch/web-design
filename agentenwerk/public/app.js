@@ -146,12 +146,26 @@ function scheduleSave() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(flush, 700);
 }
+const SECRET_KEYS = ["url", "secret", "token"];
+// The server never echoes secrets: take over only the "is set" flags and drop what was sent.
+function syncIntegrations(sent, saved) {
+  let touched = false;
+  for (const i of cfg.integrations || []) {
+    const s0 = sent.find((x) => x.id === i.id), s1 = saved.find((x) => x.id === i.id);
+    if (!s1) continue;
+    for (const k of SECRET_KEYS) if (s0 && i[k] && i[k] === s0[k]) { i[k] = ""; touched = true; }
+    i.has = s1.has; i.hint = s1.hint;
+  }
+  if (touched && section === "flow" && !document.activeElement?.closest?.("#form")) renderForm();
+}
 async function flush() {
   clearTimeout(saveTimer);
   if (writing) { writeAgain = true; return writing; }
   writing = (async () => {
     try {
+      const sent = JSON.parse(JSON.stringify(cfg.integrations || []));
       const saved = cfg.id ? await api("PUT", `/api/agents/${cfg.id}`, cfg) : await api("POST", "/api/agents", cfg);
+      syncIntegrations(sent, saved.integrations || []);
       if (!cfg.id) { cfg.id = saved.id; watchCaptured(); }
       const i = agents.findIndex((a) => a.id === saved.id);
       if (i >= 0) agents[i] = saved; else agents.unshift(saved);
@@ -262,6 +276,14 @@ function seg(key, options, rerender) {
   }
   return wrap;
 }
+let flowSelected = null, flowAdding = false;
+const integrationReady = (i) => i.enabled && (i.type === "email" ? i.to : i.type === "telegram" ? (i.has?.token || i.token) && i.chatId : (i.has?.url || i.url));
+function toggleOf(obj, key, label) {
+  const inp = h("input", { type: "checkbox", role: "switch" });
+  inp.checked = !!obj[key];
+  inp.addEventListener("change", () => { obj[key] = inp.checked; changed({ rerender: true, prompt: false }); });
+  return h("label", { class: "switch" }, inp, label);
+}
 function toggle(key, label, rerender) {
   const inp = h("input", { type: "checkbox", id: "f_" + key, role: "switch" });
   inp.checked = !!cfg[key];
@@ -278,6 +300,7 @@ const SECTIONS = [
   { id: "regeln", title: "Regeln", lead: "Leitplanken: was der Agent immer tun soll und was nie.", done: () => !!(cfg.dos.trim() || cfg.donts.trim()) },
   { id: "design", title: "Widget", lead: "So erscheint der Chat auf deiner Website. Die Vorschau rechts zeigt es live.", done: () => !!cfg.welcome.trim() },
   { id: "phone", title: "Telefon", lead: "Derselbe Agent nimmt auch Anrufe an: Er versteht, was der Anrufer sagt, und antwortet mit Stimme.", done: () => cfg.phoneEnabled },
+  { id: "flow", title: "Verbindungen", lead: "Wohin gehen Kontakte und Terminanfragen? Verbinde den Agenten mit E-Mail, Slack, Telegram oder über Webhook mit Zapier, Make und n8n.", done: () => cfg.integrations.some((i) => i.enabled) },
   { id: "prompt", title: "System-Prompt", lead: "Aus deinen Angaben entsteht dieser Prompt. Du kannst ihn auch von Hand anpassen.", done: () => true },
   { id: "embed", title: "Einbinden", lead: "Bau den Agenten mit einer Zeile Code in deine Website ein.", done: () => !!cfg.id },
 ];
@@ -589,6 +612,73 @@ const BUILDERS = {
       h("li", { text: "Die Nummer anrufen. Termine und Rückrufwünsche landen wie im Chat unter „Erfasst“, mit der Nummer des Anrufers." }),
       h("li", { text: "Auf deiner Website oder im Google-Profil kannst du die Nummer als „KI-Telefon“ angeben oder Anrufe außerhalb der Öffnungszeiten dorthin umleiten." })));
     if (/localhost|127\.0\.0\.1/.test(url)) f.append(h("div", { class: "note", text: "Der Server läuft lokal. Twilio braucht eine öffentliche https-Adresse (unter System → Öffentliche Adresse)." }));
+  },
+  flow(f) {
+    const INT = { email: ["E-Mail", "mail"], webhook: ["Webhook", "link"], slack: ["Slack", "chat"], discord: ["Discord", "chat"], telegram: ["Telegram", "send"] };
+    const node = (ic, title, sub, opts = {}) => h(opts.onclick ? "button" : "div", { type: opts.onclick ? "button" : null, class: "fnode" + (opts.on ? " on" : "") + (opts.off ? " off" : "") + (opts.active ? " active" : ""), onclick: opts.onclick },
+      h("span", { class: "fnode-ic" }, icon(ic, 22)), h("strong", { text: title }), h("span", { class: "meta", text: sub }));
+    const rerender = () => renderForm();
+    const sel = cfg.integrations.find((i) => i.id === flowSelected);
+    const triggers = [node("chat", "Chat-Widget", "Website", { on: true })];
+    if (cfg.phoneEnabled) triggers.push(node("phone", "Telefon", "Anrufe", { on: true }));
+    const sources = (cfg.faqs.length ? 1 : 0) + (cfg.knowledge.trim() ? 1 : 0) + cfg.projects.length;
+    const outs = [
+      node("book", "Wissen", `${sources} Quellen`, { onclick: () => go("wissen"), on: sources > 0 }),
+      node("phone", "Telefon", cfg.phoneEnabled ? "aktiv" : "aus", { onclick: () => go("phone"), off: !cfg.phoneEnabled }),
+      ...cfg.integrations.map((i) => node(INT[i.type][1], INT[i.type][0], i.enabled ? (integrationReady(i) ? "verbunden" : "unvollständig") : "pausiert", { onclick: () => { flowSelected = i.id; flowAdding = false; rerender(); }, active: i.id === flowSelected, off: !i.enabled, on: i.enabled && integrationReady(i) })),
+      h("button", { type: "button", class: "fnode add", onclick: () => { flowAdding = !flowAdding; rerender(); } }, h("span", { class: "fnode-ic" }, icon("plus", 22)), h("strong", { text: "Verbindung" }), h("span", { class: "meta", text: "hinzufügen" })),
+    ];
+    f.append(h("div", { class: "flow" },
+      h("div", { class: "flow-row" }, triggers), h("div", { class: "flow-line" }),
+      h("div", { class: "fnode agent" }, h("span", { class: "fnode-ic" }, icon("bot", 22)), h("strong", { text: cfg.name || "KI-Agent" }), h("span", { class: "meta", text: status.model || "KI" })),
+      h("div", { class: "flow-line" }), h("div", { class: "flow-row wrap" }, outs)));
+    if (flowAdding) {
+      f.append(field("Neue Verbindung", "Was soll bei einem neuen Kontakt oder einer Terminanfrage passieren?", h("div", { class: "chips" }, Object.entries(INT).map(([type, [label]]) =>
+        h("button", { type: "button", class: "chip", text: label, onclick: () => {
+          const id = (crypto.randomUUID?.() || String(Date.now())).replace(/-/g, "").slice(0, 12);
+          cfg.integrations.push({ id, type, enabled: true, events: ["lead", "termin"], to: "", chatId: "", url: "", secret: "", token: "", has: {}, hint: {} });
+          flowSelected = id; flowAdding = false; changed({ rerender: true });
+        } })))));
+    }
+    if (!sel) { f.append(h("p", { class: "hint", text: cfg.integrations.length ? "Wähle eine Verbindung, um sie einzurichten." : "Noch keine Verbindung. Lege eine an, damit dich neue Kontakte sofort erreichen." })); return; }
+    const sv = (k, label, ph, hint, type = "text") => {
+      const set = sel.has?.[k];
+      const inp = h("input", { class: "input", type: set || type === "password" ? "password" : type, autocomplete: "off", spellcheck: "false", value: sel[k] || "", placeholder: set ? `gespeichert (${sel.hint?.[k]}) · neu eingeben zum Ändern` : ph, oninput: (e) => { sel[k] = e.target.value; changed({ prompt: false }); }, onchange: settle });
+      return field(label, hint, inp);
+    };
+    // After a field is committed: save, then redraw so status and "Test senden" are current.
+    const settle = () => flush().then(() => { if (section === "flow") renderForm(); });
+    const fields = [];
+    if (sel.type === "email") {
+      fields.push(field("Empfänger", "Hierhin geht jede neue Anfrage.", h("input", { class: "input", type: "email", value: sel.to || "", placeholder: "du@firma.de", oninput: (e) => { sel.to = e.target.value; changed({ prompt: false }); }, onchange: settle })));
+      fields.push(h("div", { class: "note", text: status.mail ? "Der Versand läuft über die E-Mail-Einstellungen unter System. Mit Gmail: smtp.gmail.com, Port 587 und ein App-Passwort deines Google-Kontos." : "Der E-Mail-Versand ist unter System noch nicht eingerichtet." }));
+    }
+    if (sel.type === "webhook") {
+      fields.push(sv("url", "Webhook-Adresse (https)", "https://hooks.zapier.com/…", "Zapier, Make und n8n geben dir so eine Adresse. Von dort geht es weiter zu Google Kalender, Sheets, HubSpot und mehr."));
+      fields.push(sv("secret", "Signatur-Schlüssel (optional)", "beliebiges Geheimnis", "Mit diesem Schlüssel signieren wir jede Anfrage (Header X-Agentenwerk-Signature, HMAC-SHA256)."));
+    }
+    if (sel.type === "slack") fields.push(sv("url", "Slack Webhook-Adresse", "https://hooks.slack.com/services/…", "In Slack: App „Incoming Webhooks“ aktivieren und einen Kanal wählen."));
+    if (sel.type === "discord") fields.push(sv("url", "Discord Webhook-Adresse", "https://discord.com/api/webhooks/…", "Kanal-Einstellungen → Integrationen → Webhooks."));
+    if (sel.type === "telegram") {
+      fields.push(sv("token", "Bot-Token", "123456:ABC…", "Bei @BotFather in Telegram einen Bot anlegen."));
+      fields.push(field("Chat-ID", "Schreibe deinem Bot eine Nachricht und rufe https://api.telegram.org/bot<Token>/getUpdates auf, dort steht die ID.", h("input", { class: "input", value: sel.chatId || "", placeholder: "123456789", oninput: (e) => { sel.chatId = e.target.value; changed({ prompt: false }); }, onchange: settle })));
+    }
+    const ev = (k, label) => { const b = h("button", { type: "button", class: "chip", "aria-pressed": String(sel.events.includes(k)), text: label });
+      b.addEventListener("click", () => { sel.events = sel.events.includes(k) ? sel.events.filter((x) => x !== k) : [...sel.events, k]; b.setAttribute("aria-pressed", String(sel.events.includes(k))); changed({ prompt: false }); }); return b; };
+    const testMsg = h("span", { class: "hint", role: "status" });
+    const testBtn = h("button", { type: "button", class: "btn", text: "Test senden", disabled: !cfg.id });
+    testBtn.addEventListener("click", async () => {
+      testMsg.textContent = "Sendet …";
+      try { await flush(); await api("POST", `/api/agents/${cfg.id}/integrations/${sel.id}/test`, {}); testMsg.textContent = "Test gesendet."; }
+      catch (e) { testMsg.textContent = e.message; }
+    });
+    f.append(h("div", { class: "panel inner" },
+      h("h3", { text: INT[sel.type][0] }), ...fields,
+      field("Auslöser", null, h("div", { class: "chips" }, ev("lead", "Neuer Kontakt"), ev("termin", "Terminanfrage"))),
+      toggleOf(sel, "enabled", "Verbindung aktiv"),
+      h("div", { class: "toolbar" }, testBtn,
+        h("button", { type: "button", class: "btn ghost", text: "Entfernen", onclick: () => { cfg.integrations = cfg.integrations.filter((x) => x.id !== sel.id); flowSelected = null; changed({ rerender: true }); } }), testMsg),
+      cfg.id ? null : h("p", { class: "hint", text: "Speichere den Agenten zuerst (er speichert automatisch), dann kannst du testen." })));
   },
   prompt(f) {
     const manual = cfg.promptOverride != null;

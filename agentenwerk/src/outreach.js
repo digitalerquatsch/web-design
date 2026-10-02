@@ -190,7 +190,7 @@ export async function createMailer(env = process.env) {
       await transport.sendMail({
         from: env.SMTP_FROM || env.SMTP_USER,
         to, subject, text, html, replyTo,
-        headers: { "List-Unsubscribe": `<${unsubscribeUrl}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" },
+        headers: unsubscribeUrl ? { "List-Unsubscribe": `<${unsubscribeUrl}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" } : undefined,
       });
     },
   };

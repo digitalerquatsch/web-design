@@ -717,3 +717,17 @@ ul.plain { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 .bar { height: 8px; border-radius: 999px; background: var(--sunken); overflow: hidden; }
 .bar i { display: block; height: 100%; background: var(--accent); }
 .hint.warn { color: var(--warn); }
+
+/* Connections flow */
+.flow { display: grid; justify-items: center; gap: 0; padding: 18px 8px; border: 1px dashed var(--line); border-radius: 18px; background: var(--sunken); }
+.flow-row { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+.flow-line { width: 0; height: 26px; border-left: 2px dashed var(--accent); opacity: .7; }
+.fnode { display: grid; justify-items: center; gap: 4px; min-width: 104px; max-width: 150px; padding: 14px 12px; border: 1px solid var(--line); border-radius: 16px; background: var(--card, var(--bg)); color: inherit; font: inherit; text-align: center; }
+button.fnode { cursor: pointer; }
+.fnode-ic { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 12px; background: var(--accent-soft); color: var(--accent); }
+.fnode.off { opacity: .55; }
+.fnode.on { border-color: var(--accent); }
+.fnode.active { box-shadow: 0 0 0 2px var(--accent); }
+.fnode.add { border-style: dashed; background: transparent; cursor: pointer; }
+.fnode.agent { min-width: 220px; max-width: 280px; }
+.panel.inner { display: grid; gap: 14px; margin-top: 16px; }

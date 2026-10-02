@@ -10,6 +10,7 @@ import { createAuth, AuthError, ROLES, STATUSES, COOKIE, parseCookies, publicUse
 import { fromEnv, loadSystem, maskedSystem, applySystemUpdate, SystemError, billingEnabled, phoneEnabled, instagramUrl } from "./system.js";
 import { createStripe, verifyWebhook, BillingError, ACTIVE_BILLING } from "./billing.js";
 import { validTwilioRequest, speakable, phoneGreeting, twiml } from "./voice.js";
+import { sanitizeIntegrations, maskAgent, maskIntegrations, dispatch, deliver, ready as integrationReady, IntegrationError, TYPES as INTEGRATION_TYPES } from "./integrations.js";
 import { newToken, hashToken, sanitizeSnapshot, STALE_MS } from "./jarvis.js";
 import { createGithub, summarizeProject, GithubError } from "./github.js";
 import { withDefaults, publicView } from "../public/prompt.js";
@@ -70,7 +71,7 @@ function sse(res, headers = {}) {
 }
 
 // Strips fields a client must not set and fills defaults.
-function sanitizeAgent(input, id) {
+function sanitizeAgent(input, id, existing = null) {
   const a = withDefaults(input);
   a.id = id;
   a.promptOverride = typeof input.promptOverride === "string" ? input.promptOverride.slice(0, 60000) : null;
@@ -88,6 +89,7 @@ function sanitizeAgent(input, id) {
     features: (Array.isArray(p.features) ? p.features : []).slice(0, 8).map((x) => clip(x, 240)),
     faqs: (Array.isArray(p.faqs) ? p.faqs : []).slice(0, 6).filter((f) => f && typeof f.q === "string" && typeof f.a === "string").map((f) => ({ q: clip(f.q, 200), a: clip(f.a, 700) })),
   }));
+  try { a.integrations = sanitizeIntegrations(input.integrations, existing?.integrations); } catch (e) { if (e instanceof IntegrationError) throw new HttpError(400, e.message); throw e; }
   return a;
 }
 
@@ -185,7 +187,10 @@ export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl 
         onCapture: async (type, data) => {
           await store.put("captured", { id: newId(), agentId: agent.id, conversationId: conv.id, type, data, test, at: Date.now() });
           out.event("captured", { type });
-          if (!test) leadEvent(agent.id, "demo_lead", { kind: type });
+          if (!test) {
+            leadEvent(agent.id, "demo_lead", { kind: type });
+            dispatch(agent, { type, data, channel: "web", at: Date.now() }, { mailer }).catch(() => {});
+          }
         },
       });
       if (refused) {
@@ -358,6 +363,7 @@ export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl 
         agent, messages: conv.messages, text: speech, ai, channel: "phone",
         onCapture: async (type, data) => {
           await store.put("captured", { id: newId(), agentId: agent.id, conversationId: conv.id, type, data: { ...data, phone: data.phone || conv.from }, channel: "telefon", test: false, at: Date.now() });
+          dispatch(agent, { type, data: { ...data, phone: data.phone || conv.from }, channel: "telefon", at: Date.now() }, { mailer }).catch(() => {});
         },
       });
       say = refused ? "Dabei kann ich leider nicht helfen. Kann ich etwas anderes für Sie tun?" : (speakable(reply) || "Einen Moment bitte, können Sie das noch einmal sagen?");
@@ -535,7 +541,7 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
     if (!autopilotAllowed(me) && /^\/api\/(batches|leads|acquisition)/.test(p)) {
       throw new HttpError(403, "Autopilot und Akquise werden im 1:1-Mentoring freigeschaltet. Schreib mir auf Instagram.");
     }
-    const m = p.match(/^\/api\/agents\/([\w-]+)(\/[a-z-]+)?$/);
+    const m = p.match(/^\/api\/agents\/([\w-]+)(\/[a-z-]+(?:\/[\w-]+\/test)?)?$/);
 
     if (p === "/api/status" && req.method === "GET") {
       const pending = me.role === "admin" ? (await auth.users()).filter((u) => u.status === "pending").length : 0;
@@ -545,7 +551,7 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
         screenshots: Boolean(screenshotter), steps: ROW_STEPS, me: { ...publicUser(me), autopilotAllowed: autopilotAllowed(me) }, pendingUsers: pending, accounts: (await auth.count()) > 0,
         mentoring: { instagram: sys.instagram, url: instagramUrl(sys) },
         usage: { analyses: usage.analyses, chats: usage.chats, limits: limitsFor(ws) },
-        phone: { enabled: phoneEnabled(sys) },
+        phone: { enabled: phoneEnabled(sys) }, mail: Boolean(mailer),
         billing: me.billing ? { status: me.billing.status, cancelAtPeriodEnd: Boolean(me.billing.cancelAtPeriodEnd), periodEnd: me.billing.periodEnd || null } : null,
         plan: { name: sys.planName, price: sys.planPrice },
       });
@@ -617,13 +623,13 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
     if (l) return leadRoute(req, res, l[1], l[2], me);
     if (p === "/api/agents" && req.method === "GET") {
       const agents = await store.list("agents", (a) => canSeeAgent(me, a));
-      return send(res, 200, agents.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)));
+      return send(res, 200, agents.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).map(maskAgent));
     }
     if (p === "/api/agents" && req.method === "POST") {
       const body = await readJson(req);
       const agent = { ...sanitizeAgent(body, newId()), ownerId: ws, batchId: undefined, preview: undefined, createdAt: Date.now(), updatedAt: Date.now() };
       await store.put("agents", agent);
-      return send(res, 201, agent);
+      return send(res, 201, maskAgent(agent));
     }
     if (p === "/api/analyze" && req.method === "POST") {
       if (!ai.configured) throw new HttpError(503, `${ai.keyName || "Der KI-Schlüssel"} fehlt. Trage ihn in die .env ein und starte den Server neu.`);
@@ -660,8 +666,8 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
     }
     if (p === "/api/test-chat" && req.method === "POST") {
       const body = await readJson(req);
-      const agent = sanitizeAgent(body.agent || {}, String(body.agent?.id || "test"));
-      const stored = await store.get("agents", agent.id);
+      const stored = await store.get("agents", String(body.agent?.id || "test"));
+      const agent = sanitizeAgent(body.agent || {}, String(body.agent?.id || "test"), stored);
       if (stored ? !canSeeAgent(me, stored) : me.role === "kunde") throw new HttpError(403, "Dieser Agent gehört nicht zu deinem Zugang.");
       return chat(req, res, agent, body, { test: true, ws: stored?.ownerId || ws });
     }
@@ -670,13 +676,24 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
       const found = await store.get("agents", id);
       const agent = canSeeAgent(me, found) ? found : null;
       if (!agent) throw new HttpError(404, "Agent nicht gefunden.");
-      if (!sub && req.method === "GET") return send(res, 200, agent);
+      if (!sub && req.method === "GET") return send(res, 200, maskAgent(agent));
       if (!sub && req.method === "PUT") {
         const body = await readJson(req);
         // Ownership and autopilot links stay as stored, whatever the client sends.
-        const next = { ...sanitizeAgent(body, id), ownerId: agent.ownerId, batchId: agent.batchId, preview: agent.preview, prospect: agent.prospect, createdAt: agent.createdAt, updatedAt: Date.now() };
+        const next = { ...sanitizeAgent(body, id, agent), ownerId: agent.ownerId, batchId: agent.batchId, preview: agent.preview, prospect: agent.prospect, createdAt: agent.createdAt, updatedAt: Date.now() };
         await store.put("agents", next);
-        return send(res, 200, next);
+        return send(res, 200, maskAgent(next));
+      }
+      const it = sub && sub.match(/^\/integrations\/([\w-]+)\/test$/);
+      if (it && req.method === "POST") {
+        if (me.role === "kunde") throw new HttpError(403, "Kein Zugriff.");
+        const i = (agent.integrations || []).find((x) => x.id === it[1]);
+        if (!i) throw new HttpError(404, "Verbindung nicht gefunden.");
+        if (!integrationReady(i)) throw new HttpError(400, "Die Verbindung ist noch nicht vollständig eingerichtet.");
+        if (!testLimit.allow(clientIp(req))) throw new HttpError(429, "Zu viele Tests. Bitte später noch einmal.");
+        try { await deliver(i, { type: "lead", agentId: agent.id, agentName: agent.name, data: { name: "Test von Agentenwerk", message: "Wenn du das liest, funktioniert die Verbindung." } }, { mailer }); }
+        catch (e) { throw new HttpError(502, `Senden fehlgeschlagen: ${e?.message || e}`); }
+        return send(res, 200, { ok: true });
       }
       if (!sub && req.method === "DELETE") {
         await deleteAgents([id]);

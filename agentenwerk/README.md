@@ -300,3 +300,19 @@ JARVIS bleibt auf dem Mac (nur localhost). Ein kleines Skript schickt den Stand 
 3. Optional: `AGENTENWERK_NO_PROMPTS=1` lässt Prompt-Texte weg, `AGENTENWERK_INTERVAL=60` ändert den Takt.
 
 Empfangene Daten werden gekürzt (50 Runs, 100 Sessions, Texte begrenzt). „Trennen“ löscht Token und Daten.
+
+## Verbindungen (Integrationen)
+
+Im Editor unter **Verbindungen** siehst du den Ablauf als Diagramm: Chat-Widget/Telefon → Agent → Wissen, Telefon und deine Ziele. Dort legst du fest, wohin neue Kontakte und Terminanfragen gehen:
+
+| Ziel | Einrichtung |
+| --- | --- |
+| E-Mail | Empfänger eintragen. Versand über die SMTP-Daten unter System (Gmail: `smtp.gmail.com`, Port 587, App-Passwort). |
+| Webhook | https-Adresse von Zapier, Make oder n8n; optional Signatur-Schlüssel (`X-Agentenwerk-Signature`, HMAC-SHA256 über den Body). Von dort weiter zu Google Kalender, Sheets, HubSpot usw. |
+| Slack | Incoming-Webhook-Adresse (`hooks.slack.com`). |
+| Discord | Webhook-Adresse (`discord.com`). |
+| Telegram | Bot-Token von @BotFather und Chat-ID. |
+
+Webhook-Adressen und Tokens sind schreibgeschützt: der Browser sieht nur „gespeichert“. Ziele müssen https nutzen und öffentlich erreichbar sein (interne Adressen werden abgelehnt, Weiterleitungen nicht verfolgt). Ein defekter Eintrag stört den Chat nie. Tests aus dem Testchat lösen nichts aus; „Test senden“ schickt eine Probenachricht.
+
+Eine direkte Google-Anmeldung (Gmail-API, Kalender per OAuth) gibt es nicht; dafür der Weg über E-Mail (SMTP) oder Webhook.
