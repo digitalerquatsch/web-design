@@ -10,6 +10,7 @@ import { createAuth, AuthError, ROLES, STATUSES, COOKIE, parseCookies, publicUse
 import { fromEnv, loadSystem, maskedSystem, applySystemUpdate, SystemError, billingEnabled, phoneEnabled, instagramUrl } from "./system.js";
 import { createStripe, verifyWebhook, BillingError, ACTIVE_BILLING } from "./billing.js";
 import { validTwilioRequest, speakable, phoneGreeting, twiml } from "./voice.js";
+import { newToken, hashToken, sanitizeSnapshot, STALE_MS } from "./jarvis.js";
 import { createGithub, summarizeProject, GithubError } from "./github.js";
 import { withDefaults, publicView } from "../public/prompt.js";
 import { parseTable, mapRows, toCsv, TableError } from "./table.js";
@@ -134,6 +135,7 @@ export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl 
   const loginLimit = new RateLimiter(10, 15 * 60_000);
   const signupLimit = new RateLimiter(5, 60 * 60_000);
   const testLimit = new RateLimiter(20, 60 * 60_000);
+  const jarvisLimit = new RateLimiter(120, 60_000);
   const TOKEN_ADMIN = { id: "token", name: "Admin-Token", email: "", role: "admin", status: "active", agentIds: [] };
   const LOCAL_ADMIN = { id: "local", name: "Lokal (noch kein Konto)", email: "", role: "admin", status: "active", agentIds: [] };
   const conversations = new Map(); // id -> { agentId, messages, turns, lastAt, test }
@@ -548,6 +550,17 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
         plan: { name: sys.planName, price: sys.planPrice },
       });
     }
+    if (p === "/api/jarvis" && req.method === "GET") return send(res, 200, await jarvisView(req));
+    if (p === "/api/jarvis/token" && req.method === "POST") {
+      const token = newToken();
+      await store.put("config", { id: "jarvis", tokenHash: hashToken(token), createdAt: Date.now() });
+      return send(res, 201, { token, ingestUrl: `${baseUrl(req)}/api/public/jarvis/ingest` });
+    }
+    if (p === "/api/jarvis/token" && req.method === "DELETE") {
+      await store.remove("config", (c) => c.id === "jarvis");
+      await store.remove("jarvis", () => true);
+      return send(res, 200, { ok: true });
+    }
     if (p === "/api/system" && req.method === "GET") return send(res, 200, { system: maskedSystem(sys), webhookUrl: `${baseUrl(req)}/api/public/stripe/webhook`, voiceBase: `${baseUrl(req)}/api/public/voice/`, mail: Boolean(mailer), ai: ai.configured });
     if (p === "/api/system" && req.method === "PUT") {
       const body = await readJson(req, 50_000);
@@ -741,7 +754,32 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
     throw new HttpError(404, "Nicht gefunden.");
   }
 
+  async function jarvisView(req) {
+    const cfg = await store.get("config", "jarvis");
+    const snap = await store.get("jarvis", "snapshot");
+    const leads = await store.list("leads");
+    const feed = [];
+    for (const l of leads) for (const e of l.events || []) if (["demo_view", "demo_chat", "demo_lead", "email_sent", "unsubscribed"].includes(e.type)) feed.push({ kind: "lead", type: e.type, at: e.at, title: l.company || "Lead" });
+    for (const r of snap?.runs || []) if (r.createdAt) feed.push({ kind: "run", type: r.status, at: r.createdAt * (r.createdAt < 1e11 ? 1000 : 1), title: r.project || "Run", detail: r.prompt });
+    feed.sort((a, b) => b.at - a.at);
+    const stale = snap ? Date.now() - snap.receivedAt > STALE_MS : false;
+    return { connected: Boolean(cfg), tokenCreatedAt: cfg?.createdAt || null, ingestUrl: `${baseUrl(req)}/api/public/jarvis/ingest`, receivedAt: snap?.receivedAt || null, stale, snapshot: snap || null, feed: feed.slice(0, 40) };
+  }
+
+  async function jarvisIngest(req, res) {
+    if (!jarvisLimit.allow(clientIp(req))) throw new HttpError(429, "Zu viele Anfragen.");
+    const cfg = await store.get("config", "jarvis");
+    const tok = bearer(req);
+    if (!cfg || !tok || !safeEqual(hashToken(tok), cfg.tokenHash)) throw new HttpError(401, "Ungültiges Verbindungs-Token.");
+    const body = await readJson(req, 300_000);
+    let snap;
+    try { snap = sanitizeSnapshot(body); } catch (e) { throw new HttpError(400, e.message); }
+    await store.put("jarvis", { id: "snapshot", ...snap, receivedAt: Date.now() });
+    return send(res, 200, { ok: true, runs: snap.runs.length, sessions: snap.sessions.length });
+  }
+
   async function publicRoute(req, res, url) {
+    if (url.pathname === "/api/public/jarvis/ingest" && req.method === "POST") return jarvisIngest(req, res);
     if (url.pathname === "/api/public/plan" && req.method === "GET") return send(res, 200, await planInfo());
     if (url.pathname === "/api/public/waitlist" && req.method === "POST") {
       if (!signupLimit.allow(clientIp(req))) throw new HttpError(429, "Zu viele Anfragen. Bitte später noch einmal.");

@@ -10,6 +10,7 @@ import { mountAgents } from "./agents.js";
 import { icon } from "./icons.js";
 import { mountReview } from "./review.js";
 import { mountSystem } from "./system.js";
+import { mountJarvis } from "./jarvis.js";
 import { mountAccount, mountMentoring } from "./account.js";
 import { TEMPLATES, TONES, GOALS, LEAD_FIELDS, COLORS, fromTemplate, withDefaults, buildPrompt, activePrompt } from "./prompt.js";
 
@@ -824,6 +825,7 @@ async function seedProjectsAgent() {
 function alert_(text) { const b = $("banner"); b.replaceChildren(h("p", { text })); b.hidden = false; }
 const agentsView = mountAgents({ root: $("agentsView"), api, h, icon, getStatus: () => status, onNew: newAgent, onEdit: openAgentById, onSeed: seedProjectsAgent });
 
+const jarvisView = mountJarvis({ root: $("jarvisView"), api, h, icon });
 const systemView = mountSystem({ root: $("systemView"), api, h, icon, onSaved: refreshStatus });
 const accountView = mountAccount({ root: $("accountView"), api, h, icon, getStatus: () => status });
 const mentoringView = mountMentoring({ root: $("mentoringView"), h, icon, getStatus: () => status });
@@ -837,6 +839,7 @@ const PAGES = [
   { id: "acquisition", label: "Akquise", icon: "send", el: "acquisitionView", ctl: acquisitionView, staff: true, glow: true, locked: true },
   { id: "mentoring", label: "1:1 Mentoring", icon: "spark", el: "mentoringView", ctl: mentoringView, abo: true, glow: true },
   { id: "users", label: "Nutzer", icon: "users", el: "usersView", ctl: usersView, admin: true },
+  { id: "jarvis", label: "JARVIS", icon: "rocket", el: "jarvisView", ctl: jarvisView, admin: true },
   { id: "system", label: "System", icon: "settings", el: "systemView", ctl: systemView, admin: true },
   { id: "account", label: "Konto", icon: "card", el: "accountView", ctl: accountView },
   { id: "review", label: "Durchgehen", icon: "send", el: "reviewView", ctl: reviewView, staff: true, hiddenInNav: true, locked: true },

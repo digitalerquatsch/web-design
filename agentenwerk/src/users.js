@@ -171,7 +171,7 @@ export const autopilotAllowed = (user) => user.role !== "abo" || user.autopilotU
 // What each role may do in the admin API.
 export function allowed(user, method, path) {
   if (user.role === "admin") return true;
-  if (/^\/api\/(users|auth\/config|system)/.test(path)) return false;
+  if (/^\/api\/(users|auth\/config|system|jarvis)/.test(path)) return false;
   if (user.role === "team" || user.role === "abo") return true;
   // kunde
   if (path === "/api/status" || path === "/api/overview" || path === "/api/auth/password" || path === "/api/account") return true;

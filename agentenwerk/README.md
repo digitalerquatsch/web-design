@@ -285,3 +285,16 @@ Die Tests nutzen Fakes für Websites, KI-Anbieter und Mailserver. Sie brauchen w
 - Leads, die Besucher im Chat hinterlassen, gehen nicht automatisch per E-Mail an dich. Sie stehen im Builder unter „Erfasst“.
 - Antworten auf Akquise-E-Mails landen in deinem Postfach. Das Dashboard liest das Postfach nicht mit, den Status setzt du von Hand.
 - Ein Prozess, ein Speicher: Für mehrere Server-Instanzen braucht es eine Datenbank statt der JSON-Dateien.
+
+## JARVIS verbinden (gemeinsames Dashboard)
+
+Die Seite **JARVIS** (nur Admins) zeigt Runs, Sessions, die Abo-Auslastung deines JARVIS und die Akquise-Aktivität in einem gemeinsamen Verlauf.
+
+JARVIS bleibt auf dem Mac (nur localhost). Ein kleines Skript schickt den Stand an diesen Server; der Server ruft nie bei dir an.
+
+1. In Agentenwerk: **JARVIS → Token erzeugen**. Das Token wird nur einmal angezeigt und nur als Hash gespeichert.
+2. Auf dem Mac, im JARVIS-Ordner, mit laufendem JARVIS:
+   `AGENTENWERK_URL=https://deine-domain.de AGENTENWERK_TOKEN=jv_… python3 scripts/agentenwerk_sync.py`
+3. Optional: `AGENTENWERK_NO_PROMPTS=1` lässt Prompt-Texte weg, `AGENTENWERK_INTERVAL=60` ändert den Takt.
+
+Empfangene Daten werden gekürzt (50 Runs, 100 Sessions, Texte begrenzt). „Trennen“ löscht Token und Daten.

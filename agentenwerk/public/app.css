@@ -706,3 +706,14 @@ body { padding: 0; }
 .proj-top > div:first-child { display: flex; flex-direction: column; min-width: 0; }
 .proj-top strong { font-size: 16px; overflow-wrap: anywhere; }
 .proj-sum { margin: 0; font-size: 14px; color: var(--muted); line-height: 1.55; }
+
+/* JARVIS page */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; margin: 16px 0; }
+.stat { background: var(--sunken); border: 1px solid var(--line); border-radius: 14px; padding: 14px; display: grid; gap: 2px; }
+.stat strong { font-size: 26px; }
+.stat span { color: var(--muted); font-size: 13px; }
+.stat.hot { border-color: var(--accent); }
+ul.plain { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.bar { height: 8px; border-radius: 999px; background: var(--sunken); overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--accent); }
+.hint.warn { color: var(--warn); }
