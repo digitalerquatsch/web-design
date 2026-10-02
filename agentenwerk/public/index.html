@@ -8,14 +8,7 @@
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-<div id="gate" class="panel gate" hidden>
-  <h2>Anmelden</h2>
-  <p class="hint" id="gateMsg">Bitte den Admin-Token aus der <code>.env</code> eingeben.</p>
-  <form id="gateForm" class="fields" style="gap:10px">
-    <input class="input" id="gateToken" type="password" autocomplete="current-password" placeholder="ADMIN_TOKEN" aria-label="Admin-Token">
-    <button class="btn primary" type="submit">Anmelden</button>
-  </form>
-</div>
+<div id="gate" hidden></div>
 
 <div id="appRoot" hidden>
   <header class="top">
@@ -24,6 +17,7 @@
         <button type="button" role="tab" id="vBuilder" aria-pressed="true">Builder</button>
         <button type="button" role="tab" id="vAutopilot" aria-pressed="false">Autopilot</button>
         <button type="button" role="tab" id="vAcquisition" aria-pressed="false">Akquise</button>
+        <button type="button" role="tab" id="vUsers" aria-pressed="false" hidden>Nutzer<span class="count" id="pendingCount" hidden></span></button>
       </div>
     </div>
     <div class="agent-switch" id="agentSwitch">
@@ -32,11 +26,13 @@
       <button class="btn" id="newBtn" type="button">+ Neuer Agent</button>
       <span class="save-state" id="saveState" data-s="example">Neu</span>
     </div>
+    <div class="me" id="meBox"></div>
   </header>
   <div class="banner" id="banner" hidden></div>
 
   <section class="autopilot" id="autopilotView" hidden></section>
   <section class="acquisition" id="acquisitionView" hidden></section>
+  <section class="acquisition" id="usersView" hidden></section>
 
   <main class="bench" id="bench" data-mview="build">
     <div class="mobile-tabs" role="tablist">

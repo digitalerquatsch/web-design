@@ -5,7 +5,8 @@ import { Store, newId } from "./store.js";
 import { crawlSite, CrawlError } from "./crawl.js";
 import { analyzeSite } from "./analyze.js";
 import { runTurn } from "./chat.js";
-import { checkAdmin, clientIp, RateLimiter, originAllowed } from "./security.js";
+import { clientIp, RateLimiter, originAllowed, safeEqual, isLoopback, bearer } from "./security.js";
+import { createAuth, AuthError, ROLES, STATUSES, COOKIE, parseCookies, publicUser, allowed, ownsAgent, temporaryPassword, passwordProblem, verifyPassword, hashPassword, normEmail, validEmail } from "./users.js";
 import { withDefaults, publicView } from "../public/prompt.js";
 import { parseTable, mapRows, toCsv, TableError } from "./table.js";
 import { createAutopilot, summarize, ROW_STEPS } from "./autopilot.js";
@@ -81,6 +82,11 @@ export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl 
   const autopilot = createAutopilot({ store, crawl, analyze, ai, screenshotter, screenshotDir, concurrency: autopilotConcurrency });
   autopilot.resume().catch((e) => console.error("autopilot resume:", e));
   const baseUrl = (req) => publicUrl || `http://${req.headers.host}`;
+  const auth = createAuth({ store });
+  const loginLimit = new RateLimiter(10, 15 * 60_000);
+  const signupLimit = new RateLimiter(5, 60 * 60_000);
+  const TOKEN_ADMIN = { id: "token", name: "Admin-Token", email: "", role: "admin", status: "active", agentIds: [] };
+  const LOCAL_ADMIN = { id: "local", name: "Lokal (noch kein Konto)", email: "", role: "admin", status: "active", agentIds: [] };
   const conversations = new Map(); // id -> { agentId, messages, turns, lastAt, test }
   const chatLimit = new RateLimiter(20, 60_000);
   const analyzeLimit = new RateLimiter(6, 60_000);
@@ -147,14 +153,181 @@ export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl 
     }
   }
 
+  /* ---------- accounts ---------- */
+
+  const sessionToken = (req) => parseCookies(req.headers.cookie)[COOKIE] || "";
+  const secureCookie = (req) => publicUrl.startsWith("https://") || req.headers["x-forwarded-proto"] === "https";
+  const tokenOk = (req) => Boolean(adminToken) && safeEqual(bearer(req), adminToken);
+
+  async function authConfig() {
+    return { signupOpen: true, ...((await store.get("config", "auth")) || {}) };
+  }
+
+  // Who is calling? A session user, the ADMIN_TOKEN, or, before the first
+  // account exists, a request addressed to localhost.
+  async function currentUser(req) {
+    if (tokenOk(req)) return TOKEN_ADMIN;
+    const u = await auth.userForToken(sessionToken(req));
+    if (u) return u;
+    if (!adminToken && isLoopback(req) && (await auth.count()) === 0) return LOCAL_ADMIN;
+    return null;
+  }
+
+  async function startSession(res, req, user) {
+    const token = await auth.startSession(user);
+    res.setHeader("set-cookie", auth.cookie(token, { secure: secureCookie(req) }));
+  }
+
+  async function authRoute(req, res, p) {
+    if (p === "/api/auth/state" && req.method === "GET") {
+      const count = await auth.count();
+      const user = await auth.userForToken(sessionToken(req));
+      return send(res, 200, {
+        setupNeeded: count === 0,
+        setupNeedsToken: count === 0 && !isLoopback(req),
+        signupOpen: (await authConfig()).signupOpen && count > 0,
+        tokenLogin: Boolean(adminToken),
+        user: publicUser(user),
+      });
+    }
+    if (p === "/api/auth/setup" && req.method === "POST") {
+      if ((await auth.count()) > 0) throw new HttpError(409, "Es gibt schon einen Admin. Bitte anmelden.");
+      if (!isLoopback(req) && !tokenOk(req)) throw new HttpError(403, "Den ersten Admin legst du über localhost an oder mit dem ADMIN_TOKEN aus der .env.");
+      const body = await readJson(req, 10_000);
+      const user = await auth.create({ ...body, role: "admin", status: "active" });
+      await startSession(res, req, user);
+      return send(res, 201, { user: publicUser(user) });
+    }
+    if (p === "/api/auth/login" && req.method === "POST") {
+      const body = await readJson(req, 10_000);
+      const ip = clientIp(req);
+      if (!loginLimit.allow(ip) || !loginLimit.allow("mail:" + normEmail(body.email))) throw new HttpError(429, "Zu viele Anmeldeversuche. Bitte 15 Minuten warten.");
+      const user = await auth.login(body.email, body.password);
+      await startSession(res, req, user);
+      return send(res, 200, { user: publicUser(user) });
+    }
+    if (p === "/api/auth/logout" && req.method === "POST") {
+      await auth.endSession(sessionToken(req));
+      res.setHeader("set-cookie", auth.cookie("", { secure: secureCookie(req) }));
+      return send(res, 200, { ok: true });
+    }
+    if (p === "/api/auth/register" && req.method === "POST") {
+      if ((await auth.count()) === 0) throw new HttpError(400, "Bitte zuerst den ersten Admin anlegen.");
+      if (!(await authConfig()).signupOpen) throw new HttpError(403, "Neue Zugänge werden gerade nicht angenommen.");
+      if (!signupLimit.allow(clientIp(req))) throw new HttpError(429, "Zu viele Anfragen. Bitte später noch einmal.");
+      const body = await readJson(req, 10_000);
+      await auth.create({ name: body.name, email: body.email, password: body.password, company: body.company, note: body.note, role: "team", status: "pending" });
+      return send(res, 201, { ok: true, message: "Danke! Ein Admin prüft deine Anfrage und schaltet dich frei." });
+    }
+    return null;
+  }
+
+  async function usersRoute(req, res, me, id, sub) {
+    const view = (u) => publicUser(u);
+    if (!id && req.method === "GET") {
+      const all = await auth.users();
+      return send(res, 200, { users: all.sort((a, b) => b.createdAt - a.createdAt).map(view), config: await authConfig(), roles: ROLES, statuses: STATUSES });
+    }
+    if (!id && req.method === "POST") {
+      const body = await readJson(req, 10_000);
+      const password = temporaryPassword();
+      const user = await auth.create({ name: body.name, email: body.email, company: body.company, role: body.role, status: "active", password });
+      return send(res, 201, { user: view(user), password });
+    }
+    const user = id && await store.get("users", id);
+    if (!user) throw new HttpError(404, "Nutzer nicht gefunden.");
+    const wouldLeaveNoAdmin = async (next) => user.role === "admin" && user.status === "active" && (next.role !== "admin" || next.status !== "active") && (await auth.activeAdmins(user.id)) === 0;
+
+    if (!sub && req.method === "PATCH") {
+      const body = await readJson(req, 20_000);
+      const next = { role: ROLES[body.role] ? body.role : user.role, status: STATUSES[body.status] ? body.status : user.status };
+      if (await wouldLeaveNoAdmin(next)) throw new HttpError(400, "Es muss mindestens ein aktiver Admin bleiben.");
+      const approved = user.status !== "active" && next.status === "active";
+      Object.assign(user, next);
+      if (typeof body.name === "string" && body.name.trim()) user.name = body.name.trim().slice(0, 120);
+      if (typeof body.company === "string") user.company = body.company.trim().slice(0, 120);
+      if (Array.isArray(body.agentIds)) {
+        const agentIds = new Set((await store.list("agents")).map((a) => a.id));
+        user.agentIds = body.agentIds.filter((x) => typeof x === "string" && agentIds.has(x)).slice(0, 200);
+      }
+      if (approved) { user.approvedAt = Date.now(); user.approvedBy = me.name; }
+      if (user.status !== "active") await auth.endAllSessions(user.id);
+      await store.put("users", user);
+      if (approved && mailer) {
+        mailer.send({ to: user.email, subject: "Dein Zugang zu Agentenwerk ist freigeschaltet", text: `Hallo ${user.name},
+
+dein Zugang wurde freigeschaltet. Du kannst dich jetzt anmelden:
+${baseUrl(req)}/
+
+Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn("approval mail:", e?.message || e));
+      }
+      return send(res, 200, { user: view(user), mailed: approved && Boolean(mailer) });
+    }
+    if (sub === "/reset-password" && req.method === "POST") {
+      const password = temporaryPassword();
+      user.passwordHash = hashPassword(password);
+      await store.put("users", user);
+      await auth.endAllSessions(user.id);
+      return send(res, 200, { password });
+    }
+    if (!sub && req.method === "DELETE") {
+      if (user.id === me.id) throw new HttpError(400, "Du kannst dich nicht selbst löschen.");
+      if (await wouldLeaveNoAdmin({ role: "none", status: "none" })) throw new HttpError(400, "Es muss mindestens ein aktiver Admin bleiben.");
+      await auth.endAllSessions(user.id);
+      await store.remove("users", (u) => u.id === user.id);
+      return send(res, 204, "");
+    }
+    throw new HttpError(404, "Nicht gefunden.");
+  }
+
   async function adminRoute(req, res, url) {
-    const auth = checkAdmin(req, adminToken);
-    if (!auth.ok) throw new HttpError(auth.status, auth.message);
+    if (!req.headers["x-agentenwerk"]) throw new HttpError(403, "Fehlender Header X-Agentenwerk.");
     const p = url.pathname;
+    if (p.startsWith("/api/auth/") && p !== "/api/auth/password" && p !== "/api/auth/config") {
+      try {
+        const handled = await authRoute(req, res, p);
+        if (handled !== null) return handled;
+      } catch (e) {
+        if (e instanceof AuthError) throw new HttpError(e.status, e.message);
+        throw e;
+      }
+    }
+    const me = await currentUser(req);
+    if (!me) {
+      if (adminToken || (await auth.count()) > 0) throw new HttpError(401, "Bitte anmelden.");
+      throw new HttpError(403, "Ohne ADMIN_TOKEN ist der Builder vor dem ersten Konto nur über localhost erreichbar.");
+    }
+    if (!allowed(me, req.method, p)) throw new HttpError(403, "Dafür hat dein Zugang keine Berechtigung.");
     const m = p.match(/^\/api\/agents\/([\w-]+)(\/[a-z-]+)?$/);
 
     if (p === "/api/status" && req.method === "GET") {
-      return send(res, 200, { aiConfigured: ai.configured, provider: ai.provider || "", keyName: ai.keyName || "KI-Schlüssel", model: ai.model, publicUrl: baseUrl(req), screenshots: Boolean(screenshotter), steps: ROW_STEPS });
+      const pending = me.role === "admin" ? (await auth.users()).filter((u) => u.status === "pending").length : 0;
+      return send(res, 200, { aiConfigured: ai.configured, provider: ai.provider || "", keyName: ai.keyName || "KI-Schlüssel", model: ai.model, publicUrl: baseUrl(req), screenshots: Boolean(screenshotter), steps: ROW_STEPS, me: publicUser(me), pendingUsers: pending, accounts: (await auth.count()) > 0 });
+    }
+    if (p === "/api/auth/password" && req.method === "POST") {
+      if (["token", "local"].includes(me.id)) throw new HttpError(400, "Dieser Zugang hat kein Passwort.");
+      const body = await readJson(req, 10_000);
+      if (!verifyPassword(body.current, me.passwordHash)) throw new HttpError(400, "Das aktuelle Passwort stimmt nicht.");
+      const problem = passwordProblem(body.next);
+      if (problem) throw new HttpError(400, problem);
+      me.passwordHash = hashPassword(body.next);
+      await store.put("users", me);
+      await auth.endAllSessions(me.id);
+      await startSession(res, req, me);
+      return send(res, 200, { ok: true });
+    }
+    if (p === "/api/auth/config" && req.method === "PUT") {
+      const body = await readJson(req, 2_000);
+      const cfgAuth = { id: "auth", signupOpen: Boolean(body.signupOpen) };
+      await store.put("config", cfgAuth);
+      return send(res, 200, cfgAuth);
+    }
+    const um = p.match(/^\/api\/users(?:\/([\w-]+)(\/[a-z-]+)?)?$/);
+    if (um) {
+      try { return await usersRoute(req, res, me, um[1], um[2]); } catch (e) {
+        if (e instanceof AuthError) throw new HttpError(e.status, e.message);
+        throw e;
+      }
     }
     const b = p.match(/^\/api\/batches(?:\/([\w-]+)(\/[a-z]+)?)?$/);
     if (b) return batchRoute(req, res, url, b[1], b[2]);
@@ -163,7 +336,7 @@ export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl 
     const l = p.match(/^\/api\/leads(?:\/([\w-]+)(\/[a-z-]+)?)?$/);
     if (l) return leadRoute(req, res, l[1], l[2]);
     if (p === "/api/agents" && req.method === "GET") {
-      const agents = await store.list("agents");
+      const agents = await store.list("agents", (a) => ownsAgent(me, a.id));
       return send(res, 200, agents.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)));
     }
     if (p === "/api/agents" && req.method === "POST") {
@@ -192,11 +365,12 @@ export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl 
     if (p === "/api/test-chat" && req.method === "POST") {
       const body = await readJson(req);
       const agent = sanitizeAgent(body.agent || {}, String(body.agent?.id || "test"));
+      if (!ownsAgent(me, agent.id)) throw new HttpError(403, "Dieser Agent gehört nicht zu deinem Zugang.");
       return chat(req, res, agent, body, { test: true });
     }
     if (m) {
       const [, id, sub] = m;
-      const agent = await store.get("agents", id);
+      const agent = ownsAgent(me, id) ? await store.get("agents", id) : null;
       if (!agent) throw new HttpError(404, "Agent nicht gefunden.");
       if (!sub && req.method === "GET") return send(res, 200, agent);
       if (!sub && req.method === "PUT") {

@@ -3,6 +3,8 @@
 
 import { mountAutopilot } from "./autopilot.js";
 import { mountAcquisition } from "./acquisition.js";
+import { mountUsers } from "./users.js";
+import { renderAuth } from "./auth.js";
 import { TEMPLATES, TONES, GOALS, LEAD_FIELDS, COLORS, fromTemplate, withDefaults, buildPrompt, activePrompt } from "./prompt.js";
 
 /* ---------- helpers ---------- */
@@ -36,7 +38,7 @@ function headers() {
 async function failure(res) {
   const j = await res.json().catch(() => ({}));
   if (res.status === 401) { showGate(j.error); throw new AuthError(j.error); }
-  if (res.status === 403) { showGate(j.error, true); throw new AuthError(j.error); }
+  if (res.status === 403 && /localhost|X-Agentenwerk/.test(j.error || "")) { showGate(j.error); throw new AuthError(j.error); }
   throw new Error(j.error || `Fehler ${res.status}`);
 }
 async function api(method, path, body) {
@@ -77,19 +79,55 @@ let captured = [];
 let conversations = [];
 let importState = null;              // { running, log: [], error, result, applied }
 
-/* ---------- gate ---------- */
-function showGate(message, forbidden) {
+/* ---------- login ---------- */
+const me = () => status.me || {};
+const isKunde = () => me().role === "kunde";
+function showGate(message) {
   $("appRoot").hidden = true;
   $("gate").hidden = false;
-  $("gateMsg").textContent = message || "Bitte den Admin-Token aus der .env eingeben.";
-  $("gateForm").hidden = !!forbidden && !message?.includes("Token");
+  renderAuth({
+    root: $("gate"), h, message: message === "Bitte anmelden." ? "" : message,
+    onSuccess: () => { token = ""; local.set("agentenwerk.token", null); boot(); },
+    onToken: (t) => { token = t.trim(); local.set("agentenwerk.token", token || null); boot(); },
+  });
 }
-$("gateForm").addEventListener("submit", (e) => {
-  e.preventDefault();
-  token = $("gateToken").value.trim();
-  local.set("agentenwerk.token", token || null);
-  boot();
-});
+async function logout() {
+  await flush().catch(() => {});
+  await fetch("/api/auth/logout", { method: "POST", headers: headers() }).catch(() => {});
+  token = ""; local.set("agentenwerk.token", null);
+  location.reload();
+}
+let meOpen = false;
+function renderMe() {
+  const box = $("meBox");
+  const u = me();
+  const initials = String(u.name || "?").split(/\s+/).map((x) => x[0]).join("").slice(0, 2).toUpperCase();
+  const roleName = { admin: "Admin", team: "Team", kunde: "Kunde" }[u.role] || "";
+  const chipBtn = h("button", { type: "button", class: "me-chip", "aria-expanded": String(meOpen), onclick: () => { meOpen = !meOpen; renderMe(); } },
+    h("span", { class: "avatar sm", text: initials }), h("span", { class: "me-name", text: u.name || "Konto" }), h("span", { class: "meta", text: roleName }));
+  const parts = [chipBtn];
+  if (meOpen) {
+    const menu = h("div", { class: "me-menu panel" }, h("strong", { text: u.name }), u.email ? h("span", { class: "meta", text: u.email }) : null);
+    if (u.id === "local") menu.append(h("p", { class: "hint", text: "Es gibt noch kein Konto. Lege unter „Nutzer“ deinen Admin-Zugang an, bevor der Server ins Netz geht." }));
+    if (u.id && !["token", "local"].includes(u.id)) {
+      const err = h("p", { class: "hint", role: "status" });
+      const f = h("form", { class: "fields", style: "gap:8px" },
+        h("span", { class: "lbl", text: "Passwort ändern" }),
+        h("input", { class: "input", id: "pwCur", type: "password", placeholder: "Aktuelles Passwort", autocomplete: "current-password", required: true }),
+        h("input", { class: "input", id: "pwNew", type: "password", placeholder: "Neues Passwort (mind. 10 Zeichen)", autocomplete: "new-password", minlength: "10", required: true }),
+        h("button", { type: "submit", class: "btn", text: "Ändern" }), err);
+      f.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        try { await api("POST", "/api/auth/password", { current: $("pwCur").value, next: $("pwNew").value }); err.textContent = "Passwort geändert."; f.reset(); } catch (x) { err.textContent = x.message; }
+      });
+      menu.append(f);
+    }
+    menu.append(h("button", { type: "button", class: "btn ghost", text: u.id === "token" ? "Token vergessen" : "Abmelden", onclick: logout }));
+    parts.push(menu);
+  }
+  box.replaceChildren(...parts);
+}
+document.addEventListener("click", (e) => { if (meOpen && !$("meBox").contains(e.target)) { meOpen = false; renderMe(); } });
 
 /* ---------- persistence ---------- */
 const saveEl = $("saveState");
@@ -144,6 +182,7 @@ function loadAgent(a) {
 
 /* ---------- agent switcher ---------- */
 function renderAgentSelect() {
+  $("newBtn").hidden = isKunde();
   const sel = $("agentSelect");
   sel.replaceChildren();
   const list = agents.slice();
@@ -361,7 +400,7 @@ function importBox() {
 
 const BUILDERS = {
   basis(f) {
-    f.append(importBox());
+    if (!isKunde()) f.append(importBox());
     const cards = h("div", { class: "cards" });
     for (const [key, t] of Object.entries(TEMPLATES)) {
       cards.append(h("button", { type: "button", class: "card", "aria-pressed": String(cfg.template === key),
@@ -515,6 +554,7 @@ const BUILDERS = {
         scheduleSave(); renderAll(); resetChat(); watchCaptured();
       } }), msg))));
 
+    if (isKunde()) return;
     const del = h("div", { class: "toolbar" });
     const renderDel = (ask) => {
       del.replaceChildren();
@@ -676,9 +716,22 @@ async function openAgentById(id) {
 }
 const autopilotView = mountAutopilot({ root: $("autopilotView"), api, h, headers, getStatus: () => status, openAgent: openAgentById });
 const acquisitionView = mountAcquisition({ root: $("acquisitionView"), api, h, getStatus: () => status, openAgent: openAgentById });
-const VIEWS = { builder: "vBuilder", autopilot: "vAutopilot", acquisition: "vAcquisition" };
+const usersView = mountUsers({ root: $("usersView"), api, h, getStatus: () => status, onChange: refreshStatus });
+const VIEWS = { builder: "vBuilder", autopilot: "vAutopilot", acquisition: "vAcquisition", users: "vUsers" };
+const viewAllowed = (v) => v === "builder" || (v === "users" ? me().role === "admin" : !isKunde());
+async function refreshStatus() {
+  try { status = await api("GET", "/api/status"); } catch { return; }
+  const n = status.pendingUsers || 0;
+  $("pendingCount").hidden = !n;
+  $("pendingCount").textContent = String(n);
+}
 function showView(v) {
-  if (!VIEWS[v]) v = "builder";
+  if (!VIEWS[v] || !viewAllowed(v)) v = "builder";
+  $("vAutopilot").hidden = !viewAllowed("autopilot");
+  $("vAcquisition").hidden = !viewAllowed("acquisition");
+  $("vUsers").hidden = !viewAllowed("users");
+  $("usersView").hidden = v !== "users";
+  if (v === "users") usersView.show();
   for (const [name, btn] of Object.entries(VIEWS)) $(btn).setAttribute("aria-pressed", String(name === v));
   $("autopilotView").hidden = v !== "autopilot";
   $("acquisitionView").hidden = v !== "acquisition";
@@ -694,6 +747,7 @@ $("vBuilder").addEventListener("click", async () => {
 });
 $("vAutopilot").addEventListener("click", () => showView("autopilot"));
 $("vAcquisition").addEventListener("click", () => showView("acquisition"));
+$("vUsers").addEventListener("click", () => showView("users"));
 
 /* ---------- boot ---------- */
 function renderAll() { renderRail(); renderForm(); applyWidgetLook(); renderAgentSelect(); }
@@ -703,14 +757,19 @@ async function boot() {
     status = await api("GET", "/api/status");
     agents = await api("GET", "/api/agents");
   } catch (e) {
-    if (!(e instanceof AuthError)) { $("gate").hidden = false; $("gateForm").hidden = true; $("gateMsg").textContent = "Der Server ist nicht erreichbar: " + e.message; }
+    if (!(e instanceof AuthError)) showGate("Fehler beim Laden: " + e.message);
     return;
   }
   $("gate").hidden = true;
   $("appRoot").hidden = false;
+  renderMe();
+  refreshStatus();
   const banner = $("banner");
-  banner.hidden = status.aiConfigured;
-  banner.textContent = status.aiConfigured ? "" : `${status.keyName} fehlt in der .env des Servers. Konfigurieren geht, aber Website-Analyse und Testchat antworten erst mit Schlüssel.`;
+  const notes = [];
+  if (!status.aiConfigured) notes.push(h("p", { text: `${status.keyName} fehlt in der .env des Servers. Konfigurieren geht, aber Website-Analyse und Testchat antworten erst mit Schlüssel.` }));
+  if (me().id === "local") notes.push(h("p", null, "Noch kein Konto angelegt. ", h("button", { type: "button", class: "linkish", text: "Jetzt Admin-Zugang anlegen", onclick: () => showView("users") })));
+  banner.replaceChildren(...notes);
+  banner.hidden = !notes.length;
   if (agents.length) loadAgent(agents[0]);
   else { cfg = fromTemplate("blank"); setSave("example", "Neu · wird beim ersten Bearbeiten gespeichert"); renderAll(); resetChat(); renderCaptured(); }
   showView(local.get("agentenwerk.view") || "builder");

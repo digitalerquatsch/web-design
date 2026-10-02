@@ -7,31 +7,21 @@ export function hostName(req) {
   return h.startsWith("[") ? h.slice(0, h.indexOf("]") + 1) : h.split(":")[0];
 }
 
-function safeEqual(a, b) {
+export function safeEqual(a, b) {
   const x = Buffer.from(String(a));
   const y = Buffer.from(String(b));
   return x.length === y.length && crypto.timingSafeEqual(x, y);
 }
 
-/**
- * Admin routes (the builder and its API).
- * - Every admin request must carry the custom header X-Agentenwerk. A browser
- *   only sends it after a CORS preflight, which admin routes never grant, so
- *   another website cannot drive the API from a visitor's browser.
- * - With ADMIN_TOKEN set, a matching bearer token is required.
- * - Without it, only requests addressed to localhost are accepted, which also
- *   stops DNS-rebinding tricks that point a foreign name at 127.0.0.1.
- */
-export function checkAdmin(req, adminToken) {
-  if (!req.headers["x-agentenwerk"]) return { ok: false, status: 403, message: "Fehlender Header X-Agentenwerk." };
-  if (adminToken) {
-    const auth = String(req.headers.authorization || "");
-    const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-    return token && safeEqual(token, adminToken) ? { ok: true } : { ok: false, status: 401, message: "Bitte den Admin-Token eingeben." };
-  }
-  return LOOPBACK_HOSTS.has(hostName(req))
-    ? { ok: true }
-    : { ok: false, status: 403, message: "Ohne ADMIN_TOKEN ist der Builder nur über localhost erreichbar." };
+// Addressed to localhost by name. Used before the first account exists, and
+// it also stops DNS-rebinding tricks that point a foreign name at 127.0.0.1.
+export function isLoopback(req) {
+  return LOOPBACK_HOSTS.has(hostName(req));
+}
+
+export function bearer(req) {
+  const auth = String(req.headers.authorization || "");
+  return auth.startsWith("Bearer ") ? auth.slice(7) : "";
 }
 
 export function clientIp(req) {

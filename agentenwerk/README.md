@@ -10,8 +10,13 @@ Ein No-Code-Builder für Website-Chatbots. Du gibst deine Website-Adresse ein. A
 - **Aktionen im Gespräch:** Der Agent speichert Leads (`save_lead`) und Terminanfragen (`book_appointment`). Beides erscheint im Builder unter „Erfasst“, zusammen mit den Gesprächsverläufen.
 - **Autopilot:** Tabelle hochladen (Excel oder CSV, bis 200 Websites). Für jede Zeile entsteht automatisch ein fertiger Agent und eine **Demo-Seite**, auf der der Chat über einem Screenshot der echten Website liegt. Die Ergebnisliste mit Demo-Links und Einbau-Code gibt es als Tabelle zum Download, etwa für Akquise-Mails.
 - **Akquise-Dashboard:** Jede fertige Website aus dem Autopiloten wird ein Lead. Mistral schreibt pro Lead eine kurze, persönliche E-Mail mit Demo-Link. Du prüfst sie und sendest mit einem Klick. Das Dashboard zeigt, wer die Demo geöffnet oder darin gechattet hat, wann Nachfassen fällig ist und wie die Pipeline steht.
+- **Nutzerverwaltung:** Konten mit E-Mail und Passwort. Neue Leute beantragen einen Zugang, ein Admin schaltet sie frei. Rollen: Admin, Team, Kunde. Kunden sehen nur die Agenten, die du ihnen zuweist.
 - **KI aus der EU:** Standard ist Mistral AI (Sitz Paris). Claude von Anthropic ist als Alternative einstellbar.
 - **Widget zum Einbinden:** ein Script-Tag, Darstellung im Shadow DOM (die CSS deiner Seite stört nicht), mobil im Vollbild. Optional nur für freigegebene Domains.
+
+## Design
+
+Die Oberfläche ist bewusst dunkel mit Neon-Pink als einziger Akzentfarbe: Cards mit leichtem Glanz, leuchtende Primär-Buttons, Fokus-Rahmen und Datenbalken in Pink. Die Farben stehen als Variablen oben in `public/app.css` (`--accent` ist das Pink). Widget, Demo-Seiten und Abmeldeseite bleiben hell und in den Farben der jeweiligen Firma, weil Endkunden sie sehen.
 
 ## Starten
 
@@ -25,6 +30,27 @@ npm start                 # http://localhost:3000
 ```
 
 Den Mistral-Key bekommst du unter console.mistral.ai. Ohne Key startet der Builder trotzdem. Website-Analyse und Chat antworten aber erst, wenn ein Key eingetragen ist.
+
+## Nutzer und Rollen
+
+Beim ersten Start legst du im Browser den ersten Admin an (über `http://localhost:3000`). Danach ist die Anmeldung Pflicht.
+
+Im Builder oben auf **Nutzer** (nur für Admins). Eine Zahl am Tab zeigt offene Anfragen.
+
+- **Wartet auf Freischaltung:** Wer sich über „Zugang beantragen“ registriert, erscheint hier als Card mit Namen, Firma und Begründung. Rolle wählen, dann **Freischalten** oder **Ablehnen**. Ist SMTP eingerichtet, bekommt die Person eine E-Mail.
+- **Nutzer einladen:** legt direkt einen aktiven Zugang an und zeigt ein Einmal-Passwort an, einmalig. Gib es sicher weiter.
+- **Alle Zugänge:** Rolle ändern, **Sperren**/**Entsperren** (laufende Sitzungen enden sofort), **Passwort zurücksetzen**, **Löschen**. Bei Kunden: **Agenten zuweisen**.
+- **Registrierung offen:** Schalter oben rechts. Ist er aus, kommen neue Leute nur noch per Einladung rein.
+
+| Rolle | Darf |
+|---|---|
+| Admin | alles, auch Nutzerverwaltung |
+| Team | Builder, Autopilot, Akquise |
+| Kunde | nur die zugewiesenen Agenten im Builder bearbeiten und testen, keine Website-Analyse, kein Löschen |
+
+Es bleibt immer mindestens ein aktiver Admin übrig, das prüft der Server. Jeder kann sein Passwort über das Menü oben rechts ändern.
+
+**Sicherheit:** Passwörter werden mit scrypt gehasht, Sitzungen liegen in einem HttpOnly-Cookie (SameSite=Lax, `Secure` bei HTTPS) und gelten 14 Tage. Pro IP und E-Mail sind höchstens 10 Anmeldeversuche in 15 Minuten möglich. `ADMIN_TOKEN` funktioniert weiter als Generalschlüssel für die API.
 
 ## Autopilot
 
@@ -78,7 +104,7 @@ Damit Besucher chatten können, muss der Server öffentlich erreichbar sein. Daf
 
 1. einen Server oder Hoster mit Node.js (zum Beispiel Hetzner, netcup, Render oder Fly.io; für EU-Hosting einen Anbieter mit Rechenzentrum in der EU),
 2. davor einen Reverse-Proxy mit HTTPS (Caddy oder nginx),
-3. in der `.env`: `HOST=0.0.0.0`, `ADMIN_TOKEN` (ein langes Zufallspasswort) und `PUBLIC_URL`.
+3. in der `.env`: `HOST=0.0.0.0` und `PUBLIC_URL`. Lege den ersten Admin an, *bevor* der Server öffentlich erreichbar ist (lokal oder per SSH-Tunnel). Sonst setze `ADMIN_TOKEN`, dann lässt sich der erste Admin nur mit diesem Token anlegen.
 
 Trage unter **Erlaubte Websites** deine Domain ein. Dann lässt sich dein Agent nicht auf fremden Seiten einbinden.
 
@@ -93,7 +119,7 @@ Trage unter **Erlaubte Websites** deine Domain ein. Dann lässt sich dein Agent 
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | E-Mail-Versand im Akquise-Dashboard |
 | `OUTREACH_DAILY_LIMIT` | Höchstens so viele E-Mails pro 24 Stunden, Standard 40 |
 | `PORT`, `HOST` | Standard `3000`, `127.0.0.1` |
-| `ADMIN_TOKEN` | Schützt Builder und Verwaltungs-API. Ohne Token ist der Builder nur über `localhost` erreichbar |
+| `ADMIN_TOKEN` | Generalschlüssel für die API (Bearer). Nötig, um den ersten Admin von außerhalb von localhost anzulegen |
 | `PUBLIC_URL` | Öffentliche Adresse für den Einbau-Code |
 | `DATA_DIR` | Speicherort für Agenten, Leads, Gespräche und Screenshots, Standard `./data` |
 | `AGENCY_NAME`, `AGENCY_CONTACT` | Absender auf den Demo-Seiten |
@@ -101,7 +127,7 @@ Trage unter **Erlaubte Websites** deine Domain ein. Dann lässt sich dein Agent 
 
 ## Sicherheit und Datenschutz
 
-- **Verwaltung:** Admin-Anfragen brauchen den Header `X-Agentenwerk`, den Browser nur nach einem CORS-Preflight senden, den der Server nie erlaubt. Fremde Websites können die API also nicht über den Browser deiner Besucher fernsteuern. Mit `ADMIN_TOKEN` ist zusätzlich ein Bearer-Token Pflicht.
+- **Verwaltung:** Admin-Anfragen brauchen eine Sitzung (oder `ADMIN_TOKEN`) und zusätzlich den Header `X-Agentenwerk`, den Browser nur nach einem CORS-Preflight senden, den der Server nie erlaubt. Fremde Websites können die API also nicht über den Browser deiner Besucher fernsteuern. Vor dem ersten Konto ist der Builder nur über `localhost` erreichbar.
 - **Website-Abruf:** Der Crawler ruft nur öffentliche Adressen ab. Jede Weiterleitung wird einzeln geprüft, damit ein Link nicht auf `localhost` oder interne Netze (`10.x`, `192.168.x`, `169.254.169.254` usw.) führt. Eine verbleibende Lücke ist DNS-Rebinding zwischen Prüfung und Abruf. Wer den Builder für Fremde öffnet, sollte ausgehenden Traffic zusätzlich per Firewall auf das Internet beschränken.
 - **Widget:** Es sieht nur Name, Farbe, Begrüßung und Schnellantworten. System-Prompt und Wissen bleiben auf dem Server. Inhalte werden nur als Text eingefügt (kein `innerHTML`).
 - **Missbrauch:** Pro IP gelten höchstens 20 Chat-Nachrichten und 6 Analysen pro Minute. Nachrichten sind auf 2.000 Zeichen und Gespräche auf 40 Runden begrenzt.
@@ -121,12 +147,15 @@ src/outreach.js      Leads, Pipeline, E-Mail-Entwürfe, SMTP-Versand, Abmeldung
 src/autopilot.js     Warteschlange: Tabelle → Agenten + Demos, setzt nach Neustart fort
 src/table.js         CSV- und XLSX-Leser (ohne Zusatzbibliothek), Spalten-Erkennung, CSV-Export
 src/screenshot.js    Website-Screenshots mit Playwright (optional)
+src/users.js         Konten, Passwörter (scrypt), Sitzungen, Rollen und Rechte
 src/store.js         JSON-Dateien mit atomaren Schreibvorgängen
 src/security.js      Admin-Prüfung, Rate-Limit, erlaubte Domains
 public/prompt.js     Vorlagen und Prompt-Generator (Browser und Server)
 public/app.js        Builder-Oberfläche
 public/autopilot.js  Autopilot-Oberfläche
 public/acquisition.js Akquise-Dashboard
+public/users.js      Nutzerverwaltung (Cards)
+public/auth.js       Anmelden, Zugang beantragen, ersten Admin anlegen
 public/unsubscribe.html Abmeldeseite (/abmelden/TOKEN)
 public/preview.html  Demo-Seite für Kunden (/d/AGENT_ID)
 public/widget.js     Einbettbares Chat-Widget

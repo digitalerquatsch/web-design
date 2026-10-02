@@ -1,0 +1,92 @@
+// Login, access request and first-admin setup screens.
+
+export async function renderAuth({ root, h, message = "", onSuccess, onToken }) {
+  let state;
+  try {
+    const r = await fetch("/api/auth/state", { headers: { "x-agentenwerk": "1" } });
+    state = await r.json();
+    if (!r.ok) throw new Error(state.error || `Fehler ${r.status}`);
+  } catch (e) {
+    root.replaceChildren(h("div", { class: "auth-card panel" }, h("h2", { text: "Server nicht erreichbar" }), h("p", { class: "hint", text: e.message })));
+    return;
+  }
+  let mode = state.setupNeeded ? "setup" : "login";
+  let info = message;
+
+  async function post(path, body, extraHeaders = {}) {
+    const r = await fetch(path, { method: "POST", headers: { "content-type": "application/json", "x-agentenwerk": "1", ...extraHeaders }, body: JSON.stringify(body) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || `Fehler ${r.status}`);
+    return j;
+  }
+  const field = (id, label, type = "text", attrs = {}) => h("div", { class: "field" }, h("label", { for: id, text: label }), h("input", { class: "input", id, type, required: true, ...attrs }));
+  const val = (id) => document.getElementById(id)?.value || "";
+
+  function form(title, lead, fields, submitLabel, onSubmit, links = []) {
+    const err = h("div", { class: "err-box", role: "alert", hidden: true });
+    const btn = h("button", { type: "submit", class: "btn primary big", text: submitLabel });
+    const f = h("form", { class: "fields auth-form" }, ...fields, err, btn);
+    f.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      btn.disabled = true; err.hidden = true;
+      try { await onSubmit(); } catch (x) { err.textContent = x.message; err.hidden = false; }
+      btn.disabled = false;
+    });
+    return h("div", { class: "auth-card panel" },
+      h("h2", { text: title }), lead ? h("p", { class: "hint", text: lead }) : null,
+      info ? h("div", { class: "note", text: info }) : null,
+      f,
+      links.length ? h("div", { class: "auth-links" }, links) : null);
+  }
+  const link = (text, m) => h("button", { type: "button", class: "linkish", text, onclick: () => { mode = m; info = ""; render(); } });
+
+  function render() {
+    let card;
+    if (mode === "setup") {
+      card = form("Ersten Admin anlegen", "Willkommen! Lege den ersten Zugang an. Er bekommt alle Rechte und kann weitere Nutzer freischalten.", [
+        field("su_name", "Name", "text", { autocomplete: "name" }),
+        field("su_email", "E-Mail", "email", { autocomplete: "email" }),
+        field("su_pw", "Passwort (mindestens 10 Zeichen)", "password", { autocomplete: "new-password", minlength: "10" }),
+        state.setupNeedsToken ? field("su_token", "ADMIN_TOKEN aus der .env", "password") : null,
+      ].filter(Boolean), "Admin anlegen", async () => {
+        await post("/api/auth/setup", { name: val("su_name"), email: val("su_email"), password: val("su_pw") }, state.setupNeedsToken ? { authorization: "Bearer " + val("su_token") } : {});
+        onSuccess();
+      });
+    } else if (mode === "register") {
+      card = form("Zugang beantragen", "Ein Admin prüft deine Anfrage und schaltet dich frei.", [
+        field("rg_name", "Name", "text", { autocomplete: "name" }),
+        field("rg_email", "E-Mail", "email", { autocomplete: "email" }),
+        h("div", { class: "field" }, h("label", { for: "rg_company", text: "Firma (optional)" }), h("input", { class: "input", id: "rg_company", autocomplete: "organization" })),
+        field("rg_pw", "Passwort (mindestens 10 Zeichen)", "password", { autocomplete: "new-password", minlength: "10" }),
+        h("div", { class: "field" }, h("label", { for: "rg_note", text: "Wofür brauchst du den Zugang? (optional)" }), h("textarea", { class: "textarea", id: "rg_note", rows: 2 })),
+      ], "Anfrage senden", async () => {
+        const r = await post("/api/auth/register", { name: val("rg_name"), email: val("rg_email"), company: val("rg_company"), password: val("rg_pw"), note: val("rg_note") });
+        mode = "login"; info = r.message; render();
+      }, [link("Ich habe schon einen Zugang", "login")]);
+    } else if (mode === "token") {
+      card = form("Mit Admin-Token anmelden", "Für Notfälle und Automationen: der ADMIN_TOKEN aus der .env.", [
+        field("tk_token", "ADMIN_TOKEN", "password", { autocomplete: "off" }),
+      ], "Anmelden", async () => { onToken(val("tk_token")); }, [link("Zurück zur Anmeldung", "login")]);
+    } else {
+      card = form("Anmelden", null, [
+        field("li_email", "E-Mail", "email", { autocomplete: "username" }),
+        field("li_pw", "Passwort", "password", { autocomplete: "current-password" }),
+      ], "Anmelden", async () => {
+        await post("/api/auth/login", { email: val("li_email"), password: val("li_pw") });
+        onSuccess();
+      }, [state.signupOpen ? link("Zugang beantragen", "register") : null, state.tokenLogin ? link("Mit Admin-Token", "token") : null].filter(Boolean));
+    }
+    root.replaceChildren(h("div", { class: "auth" },
+      h("div", { class: "auth-hero" },
+        h("div", { class: "brand-mark big", "aria-hidden": "true", text: "A" }),
+        h("h1", { class: "neon", text: "Agentenwerk" }),
+        h("p", { text: "Website-Chatbots bauen, als Demo zeigen und Kunden gewinnen. Mit KI aus der EU." }),
+        h("ul", { class: "auth-points" },
+          h("li", { text: "Website einlesen, Agent fertig" }),
+          h("li", { text: "Autopilot für ganze Listen" }),
+          h("li", { text: "Akquise mit Demo-Links" }))),
+      card));
+    root.querySelector("input")?.focus();
+  }
+  render();
+}
