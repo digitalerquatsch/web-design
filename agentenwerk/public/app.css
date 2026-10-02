@@ -792,3 +792,6 @@ button.fnode { cursor: pointer; }
 .customer { display: grid; gap: 10px; }
 .customer .toolbar { justify-content: space-between; }
 pre.code { white-space: pre-wrap; word-break: break-all; }
+
+.ws-field-row { display: grid; grid-template-columns: 1fr; gap: 6px; padding: 10px; border: 1px solid var(--line); border-radius: 12px; }
+@media (min-width: 720px) { .ws-field-row { grid-template-columns: 1fr 1.4fr 1fr auto; align-items: center; } }

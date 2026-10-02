@@ -293,6 +293,29 @@ function toggle(key, label, rerender) {
   return h("label", { class: "switch", for: "f_" + key }, inp, label);
 }
 
+/* ---------- agent from a description ---------- */
+const describeState = { text: "", busy: false, error: "", missing: [] };
+function describeCard() {
+  const box = h("div", { class: "import", id: "describeBox" });
+  const t = h("textarea", { class: "textarea", id: "f_describe", rows: 3, maxlength: "1500", placeholder: "z. B. Ein freundlicher Assistent für meine Zahnarztpraxis in Köln, der Terminanfragen aufnimmt und Fragen zu Behandlungen beantwortet.", "aria-label": "Beschreibung des Agenten", disabled: describeState.busy, oninput: (e) => { describeState.text = e.target.value; } });
+  t.value = describeState.text;
+  const go = h("button", { type: "button", class: "btn primary", disabled: describeState.busy, text: describeState.busy ? "Baut …" : "Agent aus Beschreibung bauen", onclick: async () => {
+    describeState.busy = true; describeState.error = ""; describeState.missing = []; renderForm();
+    try {
+      const r = await api("POST", "/api/agents/describe", { description: describeState.text });
+      const keep = { id: cfg.id, allowedOrigins: cfg.allowedOrigins, integrations: cfg.integrations, sources: cfg.sources };
+      cfg = { ...cfg, ...r.fields, ...keep };
+      describeState.missing = r.missing || [];
+      changed({ rerender: true }); resetChat(); renderAgentSelect();
+    } catch (e) { if (!(e instanceof AuthError)) describeState.error = e.message; }
+    describeState.busy = false; renderForm();
+  } });
+  box.append(h("strong", { text: "Oder beschreibe deinen Agenten" }), h("p", { class: "hint", text: "Ein, zwei Sätze reichen. Die KI richtet Ton, Ziel, Fragen und Begrüßung ein. Prüfe das Ergebnis danach und ergänze Fakten, die du nicht genannt hast." }), t, h("div", { class: "toolbar" }, go),
+    describeState.error ? h("p", { class: "msg err", role: "alert", text: describeState.error }) : null,
+    describeState.missing.length ? h("div", { class: "note" }, h("strong", { text: "Noch nicht beschrieben: " }), describeState.missing.join(" · ")) : null);
+  return box;
+}
+
 /* ---------- sections ---------- */
 const SECTIONS = [
   { id: "basis", title: "Grundlagen", lead: "Lies deine Website ein oder wähle eine Vorlage. Beides füllt alle Bereiche vor.", done: () => !!cfg.name.trim() && !!(cfg.company.trim() || cfg.industry.trim()) },
@@ -563,6 +586,7 @@ function projectsCard() {
 const BUILDERS = {
   basis(f) {
     if (!isKunde()) f.append(importBox());
+    if (!isKunde()) f.append(describeCard());
     const cards = h("div", { class: "cards" });
     for (const [key, t] of Object.entries(TEMPLATES)) {
       cards.append(h("button", { type: "button", class: "card", "aria-pressed": String(cfg.template === key),
@@ -712,7 +736,7 @@ const BUILDERS = {
     const outs = [
       node("book", "Wissen", `${sources} Quellen`, { onclick: () => go("wissen"), on: sources > 0 }),
       node("phone", "Telefon", cfg.phoneEnabled ? "aktiv" : "aus", { onclick: () => go("phone"), off: !cfg.phoneEnabled }),
-      ...cfg.integrations.map((i) => node(INT[i.type][1], INT[i.type][0], i.enabled ? (integrationReady(i) ? "verbunden" : "unvollständig") : "pausiert", { onclick: () => { flowSelected = i.id; flowAdding = false; rerender(); }, active: i.id === flowSelected, off: !i.enabled, on: i.enabled && integrationReady(i) })),
+      ...cfg.integrations.map((i) => node(INT[i.type][1], i.label || INT[i.type][0], i.enabled ? (integrationReady(i) ? "verbunden" : "unvollständig") : "pausiert", { onclick: () => { flowSelected = i.id; flowAdding = false; rerender(); }, active: i.id === flowSelected, off: !i.enabled, on: i.enabled && integrationReady(i) })),
       h("button", { type: "button", class: "fnode add", onclick: () => { flowAdding = !flowAdding; rerender(); } }, h("span", { class: "fnode-ic" }, icon("plus", 22)), h("strong", { text: "Verbindung" }), h("span", { class: "meta", text: "hinzufügen" })),
     ];
     f.append(h("div", { class: "flow" },
@@ -723,7 +747,7 @@ const BUILDERS = {
       f.append(field("Neue Verbindung", "Was soll bei einem neuen Kontakt oder einer Terminanfrage passieren?", h("div", { class: "chips" }, Object.entries(INT).map(([type, [label]]) =>
         h("button", { type: "button", class: "chip", text: label, onclick: () => {
           const id = (crypto.randomUUID?.() || String(Date.now())).replace(/-/g, "").slice(0, 12);
-          cfg.integrations.push({ id, type, enabled: true, events: ["lead", "termin"], to: "", chatId: "", url: "", secret: "", token: "", has: {}, hint: {} });
+          cfg.integrations.push({ id, type, enabled: true, label: "", events: ["lead", "termin"], to: "", chatId: "", url: "", secret: "", token: "", tool: { on: false, description: "", returnResponse: false, fields: [] }, has: {}, hint: {} });
           flowSelected = id; flowAdding = false; changed({ rerender: true });
         } })))));
     }
@@ -741,7 +765,32 @@ const BUILDERS = {
       fields.push(h("div", { class: "note", text: status.mail ? "Der Versand läuft über die E-Mail-Einstellungen unter System. Mit Gmail: smtp.gmail.com, Port 587 und ein App-Passwort deines Google-Kontos." : "Der E-Mail-Versand ist unter System noch nicht eingerichtet." }));
     }
     if (sel.type === "webhook") {
-      fields.push(sv("url", "Webhook-Adresse (https)", "https://hooks.zapier.com/…", "Zapier, Make und n8n geben dir so eine Adresse. Von dort geht es weiter zu Google Kalender, Sheets, HubSpot und mehr."));
+      sel.tool ||= { on: false, description: "", returnResponse: false, fields: [] };
+      const BRANDS = ["Gmail", "Google Kalender", "Google Sheets", "WhatsApp", "Telegram", "HubSpot", "Notion", "Zapier", "Make", "n8n"];
+      const TEMPLATES = {
+        "Termin prüfen oder buchen": [["datum", "Wunschdatum"], ["uhrzeit", "Wunschuhrzeit"], ["name", "Name des Kunden"], ["email", "E-Mail-Adresse des Kunden"], ["leistung", "Gewünschte Leistung"]],
+        "Kontakt anlegen": [["vorname", "Vorname des Kunden"], ["nachname", "Nachname des Kunden"], ["email", "E-Mail-Adresse des Kunden"], ["telefon", "Telefonnummer des Kunden"]],
+        "Nachricht senden": [["text", "Inhalt der Nachricht"]],
+      };
+      fields.push(h("div", { class: "field" }, h("span", { class: "lbl", text: "Integration" }), h("div", { class: "chips" }, BRANDS.map((b) => h("button", { type: "button", class: "chip", "aria-pressed": String(sel.label === b), text: b, onclick: () => { sel.label = sel.label === b ? "" : b; changed({ rerender: true, prompt: false }); } })))));
+      fields.push(field("Name (wird im Ablauf angezeigt)", null, h("input", { class: "input", value: sel.label || "", placeholder: "z. B. Gmail", oninput: (e) => { sel.label = e.target.value; changed({ prompt: false }); }, onchange: settle })));
+      fields.push(sv("url", "Webhook-URL (https)", "https://hook.eu.make.com/…", "Make, Zapier oder n8n geben dir so eine Adresse. Von dort geht es weiter zu Google Kalender, Sheets, HubSpot und mehr."));
+      fields.push(toggleOf(sel.tool, "on", "Der Agent darf diesen Webhook im Gespräch selbst aufrufen"));
+      if (sel.tool.on) {
+        const desc = h("textarea", { class: "textarea", rows: 2, placeholder: "Was macht dieser Webhook? Wann soll der Agent ihn nutzen?", oninput: (e) => { sel.tool.description = e.target.value; changed({ prompt: false }); } });
+        desc.value = sel.tool.description || "";
+        fields.push(field("Beschreibung", "Das liest der Agent, um zu entscheiden, wann er den Webhook aufruft.", desc));
+        fields.push(toggleOf(sel.tool, "returnResponse", "Antwort zurück in den KI-Kontext geben"));
+        const rows = h("div", { class: "fields" }, sel.tool.fields.map((fl, idx) => h("div", { class: "ws-field-row" },
+          h("input", { class: "input mono", "aria-label": "Schlüssel", placeholder: "schluessel", value: fl.key, oninput: (e) => { fl.key = e.target.value; changed({ prompt: false }); } }),
+          h("input", { class: "input", "aria-label": "Beschreibung oder fester Wert", placeholder: "Was der Agent einträgt", value: fl.desc, oninput: (e) => { fl.desc = e.target.value; changed({ prompt: false }); } }),
+          h("input", { class: "input", "aria-label": "Fester Wert", placeholder: "fester Wert (optional)", value: fl.fixed || "", oninput: (e) => { fl.fixed = e.target.value; changed({ prompt: false }); } }),
+          h("button", { type: "button", class: "x", "aria-label": "Feld entfernen", text: "×", onclick: () => { sel.tool.fields.splice(idx, 1); changed({ rerender: true, prompt: false }); } }))));
+        const tpl = h("select", { class: "input select", "aria-label": "Vorlage", onchange: (e) => { const t = TEMPLATES[e.target.value]; if (t) { sel.tool.fields = t.map(([key, desc]) => ({ key, desc, fixed: "" })); changed({ rerender: true, prompt: false }); } } }, h("option", { value: "", text: "Vorlage für Felder …" }), Object.keys(TEMPLATES).map((k) => h("option", { value: k, text: k })));
+        fields.push(field("Felder", "Diese Schlüssel füllt der Agent aus dem Gespräch. Trag rechts einen festen Wert ein, wenn er immer gleich ist.", h("div", { class: "fields" }, tpl, rows,
+          h("div", null, h("button", { type: "button", class: "btn", onclick: () => { sel.tool.fields.push({ key: "", desc: "", fixed: "" }); changed({ rerender: true, prompt: false }); } }, icon("plus", 16), "Feld hinzufügen")))));
+        fields.push(h("div", { class: "note", text: "Im Testchat wird der Webhook nicht aufgerufen. „Test senden“ schickt Beispieldaten an die Adresse. Die Antwort des Dienstes gilt für den Agenten als Daten, nicht als Anweisung." }));
+      }
       fields.push(sv("secret", "Signatur-Schlüssel (optional)", "beliebiges Geheimnis", "Mit diesem Schlüssel signieren wir jede Anfrage (Header X-Agentenwerk-Signature, HMAC-SHA256)."));
     }
     if (sel.type === "slack") fields.push(sv("url", "Slack Webhook-Adresse", "https://hooks.slack.com/services/…", "In Slack: App „Incoming Webhooks“ aktivieren und einen Kanal wählen."));
@@ -760,8 +809,8 @@ const BUILDERS = {
       catch (e) { testMsg.textContent = e.message; }
     });
     f.append(h("div", { class: "panel inner" },
-      h("h3", { text: INT[sel.type][0] }), ...fields,
-      field("Auslöser", null, h("div", { class: "chips" }, ev("lead", "Neuer Kontakt"), ev("termin", "Terminanfrage"))),
+      h("h3", { text: sel.label || INT[sel.type][0] }), ...fields,
+      sel.type === "webhook" && sel.tool?.on ? null : field("Auslöser", null, h("div", { class: "chips" }, ev("lead", "Neuer Kontakt"), ev("termin", "Terminanfrage"))),
       toggleOf(sel, "enabled", "Verbindung aktiv"),
       h("div", { class: "toolbar" }, testBtn,
         h("button", { type: "button", class: "btn ghost", text: "Entfernen", onclick: () => { cfg.integrations = cfg.integrations.filter((x) => x.id !== sel.id); flowSelected = null; changed({ rerender: true }); } }), testMsg),

@@ -4,14 +4,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Store, newId } from "./store.js";
 import { crawlSite, CrawlError } from "./crawl.js";
-import { analyzeSite } from "./analyze.js";
+import { analyzeSite, describeAgent } from "./analyze.js";
 import { runTurn } from "./chat.js";
 import { clientIp, RateLimiter, originAllowed, safeEqual, isLoopback, bearer } from "./security.js";
 import { createAuth, AuthError, ROLES, STATUSES, COOKIE, parseCookies, publicUser, allowed, ownsAgent, temporaryPassword, passwordProblem, verifyPassword, hashPassword, normEmail, validEmail, workspaceOf, inWorkspace, canSeeAgent, autopilotAllowed } from "./users.js";
 import { fromEnv, loadSystem, maskedSystem, applySystemUpdate, SystemError, billingEnabled, phoneEnabled, instagramUrl } from "./system.js";
 import { createStripe, verifyWebhook, BillingError, ACTIVE_BILLING } from "./billing.js";
 import { validTwilioRequest, speakable, phoneGreeting, twiml } from "./voice.js";
-import { sanitizeIntegrations, maskAgent, maskIntegrations, dispatch, deliver, ready as integrationReady, IntegrationError, TYPES as INTEGRATION_TYPES } from "./integrations.js";
+import { sanitizeIntegrations, maskAgent, maskIntegrations, dispatch, deliver, callHook, ready as integrationReady, IntegrationError, TYPES as INTEGRATION_TYPES } from "./integrations.js";
 import { newCode, hashCode } from "./twofa.js";
 import dnsPromises from "node:dns/promises";
 import { normalizeDomain, sanitizeSite, readiness, legalDrafts, renderSite, renderLegal, decodeImage, SiteError, PAGE_HEADERS, NICHES, COUNTRIES } from "./site.js";
@@ -106,7 +106,7 @@ function sanitizeAgent(input, id, existing = null) {
   return a;
 }
 
-export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl = crawlSite, analyze = analyzeSite, screenshotter = null, autopilotConcurrency = 2, agency = {}, mailer = null, factories = null, env = {}, stripeFetch, githubFetch, resolveCname = (d) => dnsPromises.resolveCname(d) } = {}) {
+export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl = crawlSite, analyze = analyzeSite, screenshotter = null, autopilotConcurrency = 2, describe = describeAgent, agency = {}, mailer = null, factories = null, env = {}, stripeFetch, githubFetch, resolveCname = (d) => dnsPromises.resolveCname(d) } = {}) {
   const store = new Store(dataDir);
   const screenshotDir = path.join(dataDir, "screenshots");
 
@@ -196,6 +196,7 @@ export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl 
       await logMessage(conv, "user", text);
       const { reply, refused } = await runTurn({
         agent, messages: conv.messages, text, ai,
+        onHook: async (hook, values) => (test ? "Testmodus: Der Webhook wurde nicht aufgerufen." : callHook(hook, values, { agentId: agent.id, agentName: agent.name })),
         onText: (delta) => out.event("text", { delta }),
         onCapture: async (type, data) => {
           await store.put("captured", { id: newId(), agentId: agent.id, conversationId: conv.id, type, data, test, at: Date.now() });
@@ -374,6 +375,7 @@ export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl 
     try {
       const { reply, refused } = await runTurn({
         agent, messages: conv.messages, text: speech, ai, channel: "phone",
+        onHook: (hook, values) => callHook(hook, values, { agentId: agent.id, agentName: agent.name }),
         onCapture: async (type, data) => {
           await store.put("captured", { id: newId(), agentId: agent.id, conversationId: conv.id, type, data: { ...data, phone: data.phone || conv.from }, channel: "telefon", test: false, at: Date.now() });
           dispatch(agent, { type, data: { ...data, phone: data.phone || conv.from }, channel: "telefon", at: Date.now() }, { mailer }).catch(() => {});
@@ -814,6 +816,20 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
       const mine = (await store.list("agents", (a) => wanted.includes(a.id) && canSeeAgent(me, a))).map((a) => a.id);
       await deleteAgents(mine);
       return send(res, 200, { deleted: mine.length });
+    }
+    if (p === "/api/agents/describe" && req.method === "POST") {
+      if (me.role === "kunde") throw new HttpError(403, "Kein Zugriff.");
+      if (!ai.configured) throw new HttpError(503, `${ai.keyName || "Der KI-Schlüssel"} fehlt. Trage ihn unter System ein.`);
+      if (!analyzeLimit.allow(clientIp(req))) throw new HttpError(429, "Zu viele Anfragen. Bitte eine Minute warten.");
+      const body = await readJson(req, 5_000);
+      const description = String(body.description || "").trim();
+      if (description.length < 15) throw new HttpError(400, "Beschreibe den Agenten bitte in ein, zwei Sätzen (mindestens 15 Zeichen).");
+      try { await consume(ws, "analyses"); } catch (e) { if (e instanceof QuotaError) throw new HttpError(429, e.message); throw e; }
+      try { return send(res, 200, await describe(description, { ai })); }
+      catch (e) {
+        if (e?.code === "refusal" || e?.code === "invalid_output" || e?.code === "max_tokens") throw new HttpError(502, "Daraus konnte kein Agent gebaut werden. Bitte anders formulieren.");
+        throw e;
+      }
     }
     if (p === "/api/analyze" && req.method === "POST") {
       if (!ai.configured) throw new HttpError(503, `${ai.keyName || "Der KI-Schlüssel"} fehlt. Trage ihn in die .env ein und starte den Server neu.`);

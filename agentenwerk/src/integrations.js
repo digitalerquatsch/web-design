@@ -37,11 +37,25 @@ export function sanitizeIntegrations(incoming, existing = []) {
     const id = /^[\w-]{4,30}$/.test(raw.id || "") ? raw.id : crypto.randomBytes(6).toString("base64url");
     const prev = old.get(id);
     const i = { id, type: raw.type, enabled: raw.enabled !== false, events: EVENTS.filter((e) => (raw.events || EVENTS).includes(e)) };
+    i.label = clip(raw.label, 40);
     i.to = clip(raw.to, 200);
     i.chatId = clip(raw.chatId, 40);
     for (const f of SECRET_FIELDS) {
       const v = clip(raw[f], 500);
       i[f] = v || (prev?.type === raw.type ? prev[f] || "" : "");
+    }
+    // A webhook can also be a tool the agent calls itself, with fields it fills from the conversation.
+    const t = raw.tool && typeof raw.tool === "object" ? raw.tool : (prev?.tool || {});
+    if (raw.type === "webhook") {
+      const seen = new Set();
+      i.tool = {
+        on: Boolean(t.on),
+        description: clip(t.description, 300),
+        returnResponse: Boolean(t.returnResponse),
+        fields: (Array.isArray(t.fields) ? t.fields : []).slice(0, 12).map((f) => ({ key: clip(f?.key, 30).toLowerCase(), desc: clip(f?.desc, 200), fixed: clip(f?.fixed, 200) }))
+          .filter((f) => /^[a-z][a-z0-9_]{0,29}$/.test(f.key) && !seen.has(f.key) && seen.add(f.key)),
+      };
+      if (i.tool.on) i.events = [];
     }
     if (i.type === "email" && i.to && !EMAIL.test(i.to)) throw new IntegrationError("Bitte eine gültige E-Mail-Adresse angeben.");
     if (i.url) { const p = urlProblem(i.type, i.url); if (p) throw new IntegrationError(p); }
@@ -59,6 +73,9 @@ export function maskIntegrations(list) {
 }
 
 export const maskAgent = (agent) => (agent && agent.integrations ? { ...agent, integrations: maskIntegrations(agent.integrations) } : agent);
+
+export const isTool = (i) => i.type === "webhook" && i.tool?.on && ready(i);
+export const toolName = (i) => `hook_${i.id}`.replace(/[^\w-]/g, "_").slice(0, 60);
 
 export const ready = (i) => i.enabled && TYPES[i.type].needs.every((k) => i[k]);
 
@@ -101,11 +118,27 @@ export async function deliver(i, event, { mailer, fetchImpl = fetch, lookup, tim
   if (res.status >= 300) throw new IntegrationError(`Das Ziel antwortete mit ${res.status}.`);
 }
 
+// The agent calls a webhook during a chat: returns the (capped) answer text. Values are untrusted model output.
+export async function callHook(i, values, { agentId = "", agentName = "", fetchImpl = fetch, lookup, timeoutMs = 8000 } = {}) {
+  const body = {};
+  for (const f of i.tool.fields) body[f.key] = f.fixed || clip(values?.[f.key], 1000);
+  const payload = JSON.stringify({ event: "tool", agent: { id: agentId, name: agentName }, data: body, at: new Date().toISOString() });
+  const u = new URL(i.url);
+  try { await assertPublicHost(u.hostname, lookup); } catch (e) { throw new IntegrationError(e.message); }
+  const headers = { "content-type": "application/json", "user-agent": "Agentenwerk" };
+  if (i.secret) headers["x-agentenwerk-signature"] = `sha256=${crypto.createHmac("sha256", i.secret).update(payload).digest("hex")}`;
+  const res = await fetchImpl(i.url, { method: "POST", headers, body: payload, redirect: "manual", signal: AbortSignal.timeout(timeoutMs) });
+  if (res.status >= 300) throw new IntegrationError(`Das Ziel antwortete mit ${res.status}.`);
+  if (!i.tool.returnResponse) return "Gesendet.";
+  const text = (await res.text()).slice(0, 2000).trim();
+  return text || "Gesendet (leere Antwort).";
+}
+
 // Fire-and-forget for the chat path: a broken integration never breaks the chat.
 export async function dispatch(agent, event, deps = {}) {
   const results = [];
   for (const i of agent.integrations || []) {
-    if (!ready(i) || !i.events.includes(event.type)) continue;
+    if (!ready(i) || isTool(i) || !i.events.includes(event.type)) continue;
     try { await deliver(i, { ...event, agentId: agent.id, agentName: agent.name }, deps); results.push({ id: i.id, ok: true }); }
     catch (e) { results.push({ id: i.id, ok: false, error: e?.message || String(e) }); }
   }
