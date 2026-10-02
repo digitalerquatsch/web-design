@@ -295,7 +295,7 @@ function toggle(key, label, rerender) {
 const SECTIONS = [
   { id: "basis", title: "Grundlagen", lead: "Lies deine Website ein oder wähle eine Vorlage. Beides füllt alle Bereiche vor.", done: () => !!cfg.name.trim() && !!(cfg.company.trim() || cfg.industry.trim()) },
   { id: "stil", title: "Persönlichkeit", lead: "Wie klingt dein Agent? Ton, Anrede und Länge der Antworten.", done: () => cfg.tone.length > 0 },
-  { id: "wissen", title: "Wissen", lead: "Alles, was der Agent über dein Unternehmen und deine Projekte wissen muss. Er nutzt nur, was hier steht.", done: () => cfg.knowledge.trim().length > 40 || cfg.faqs.length > 0 || cfg.projects.length > 0 },
+  { id: "wissen", title: "Wissen", lead: "Alles, was der Agent über dein Unternehmen und deine Projekte wissen muss. Er nutzt nur, was hier steht.", done: () => cfg.knowledge.trim().length > 40 || cfg.faqs.length > 0 || cfg.projects.length > 0 || cfg.sources.length > 0 },
   { id: "ziele", title: "Ziel & Aktionen", lead: "Was soll am Ende einer Unterhaltung herauskommen?", done: () => !!cfg.goal && cfg.leadFields.length > 0 },
   { id: "regeln", title: "Regeln", lead: "Leitplanken: was der Agent immer tun soll und was nie.", done: () => !!(cfg.dos.trim() || cfg.donts.trim()) },
   { id: "design", title: "Widget", lead: "So erscheint der Chat auf deiner Website. Die Vorschau rechts zeigt es live.", done: () => !!cfg.welcome.trim() },
@@ -433,6 +433,88 @@ function importBox() {
 }
 
 /* ---------- projects: GitHub repositories the agent knows ---------- */
+/* ---------- knowledge base dialog ---------- */
+const kb = { mode: "file", url: "", thorough: false, busy: false, log: "", error: "" };
+const kbChars = () => cfg.sources.reduce((n, x) => n + (x.chars || x.text?.length || 0), 0);
+
+function openKnowledge() {
+  if (document.getElementById("kbOverlay")) return;
+  const previous = document.activeElement;
+  const body = h("div", { class: "kb-body" });
+  const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey); previous?.focus?.(); if (section === "wissen") renderForm(); renderRail(); };
+  const onKey = (e) => { if (e.key === "Escape" && !kb.busy) close(); };
+  const title = h("h3", { id: "kbTitle", text: "Wissensdatenbank" });
+  const overlay = h("div", { class: "kb-overlay", id: "kbOverlay", role: "dialog", "aria-modal": "true", "aria-labelledby": "kbTitle" },
+    h("div", { class: "kb-card" },
+      h("div", { class: "kb-head" }, h("span", { class: "fnode-ic" }, icon("book", 22)),
+        h("div", null, title, h("p", { class: "hint", text: "Inhalte werden eingelesen und dem Agenten beim Chatten zur Verfügung gestellt." })),
+        h("button", { type: "button", class: "icon-btn", "aria-label": "Schließen", onclick: close }, icon("close", 18))),
+      body,
+      h("div", { class: "kb-foot" }, h("button", { type: "button", class: "btn primary", text: "Fertig", onclick: close }))));
+  const addSources = (list) => { for (const x of list) cfg.sources.push({ id: x.id || (crypto.randomUUID?.() || String(Date.now() + Math.random())).replace(/-/g, "").slice(0, 12), kind: x.kind, name: x.name, url: x.url || "", text: x.text, chars: x.text.length, addedAt: x.addedAt || Date.now() }); changed({ prompt: true }); draw(); };
+
+  async function importSite() {
+    const url = kb.url.trim();
+    if (!url || kb.busy) return;
+    kb.busy = true; kb.error = ""; kb.log = "Verbindet …"; draw();
+    let pages = 0;
+    try {
+      await apiStream("/api/sources/website", { url, thorough: kb.thorough }, (name, data) => {
+        if (name === "status") kb.log = data.message;
+        else if (name === "page") { pages++; kb.log = `${pages} Seiten gelesen: ${data.title}`; }
+        else if (name === "error") kb.error = data.message;
+        else if (name === "result") { addSources(data.sources); kb.url = ""; }
+        const el = document.getElementById("kbLog"); if (el) el.textContent = kb.log;
+      });
+    } catch (e) { if (!(e instanceof AuthError)) kb.error = e.message; }
+    kb.busy = false; kb.log = ""; draw();
+  }
+
+  function draw() {
+    const file = h("input", { type: "file", id: "kb_file", accept: ".txt,.md,.csv,.json,.html,text/*", multiple: true, hidden: true });
+    file.addEventListener("change", async () => {
+      const added = [];
+      for (const fl of [...file.files]) {
+        if (fl.size > 2_000_000) { kb.error = `${fl.name} ist größer als 2 MB.`; continue; }
+        let text = await fl.text();
+        if (/\.html?$/i.test(fl.name)) text = new DOMParser().parseFromString(text, "text/html").body.textContent.replace(/\s+/g, " ");
+        added.push({ kind: "file", name: fl.name, text: text.slice(0, 60000) });
+      }
+      file.value = "";
+      if (added.length) { kb.error = ""; addSources(added); } else draw();
+    });
+    const tab = (m, ic, label) => h("button", { type: "button", class: "kb-tab", "aria-pressed": String(kb.mode === m), onclick: () => { kb.mode = m; kb.error = ""; draw(); } }, icon(ic, 18), label);
+    const url = h("input", { class: "input", id: "kb_url", type: "text", inputmode: "url", autocomplete: "off", spellcheck: "false", placeholder: "https://kunden-website.de", value: kb.url, disabled: kb.busy,
+      oninput: (e) => { kb.url = e.target.value; }, onkeydown: (e) => { if (e.key === "Enter") importSite(); } });
+    const thorough = h("input", { type: "checkbox", id: "kb_deep", checked: kb.thorough, disabled: kb.busy, onchange: (e) => { kb.thorough = e.target.checked; } });
+    const src = kb.mode === "file"
+      ? h("div", { class: "kb-drop" }, h("button", { type: "button", class: "btn", onclick: () => file.click() }, icon("upload", 16), "Dateien auswählen"), file, h("p", { class: "hint", text: "Text, Markdown, CSV, JSON oder HTML, bis 2 MB je Datei. PDF und Word bitte vorher als Text speichern." }))
+      : h("div", { class: "fields" },
+        h("div", { class: "kb-url" }, url, h("button", { type: "button", class: "btn primary", text: kb.busy ? "Liest …" : "Import", disabled: kb.busy, onclick: importSite })),
+        h("label", { class: "check", for: "kb_deep" }, thorough, h("span", null, h("strong", { text: "Gründlich einlesen. " }), "Liest bis zu 80 Seiten statt 8 und legt jede Unterseite einzeln ab. Für Shops und große Kataloge; dauert bis zu vier Minuten, lass das Fenster so lange offen.")),
+        kb.busy ? h("p", { class: "hint", id: "kbLog", role: "status", text: kb.log }) : null);
+    const list = cfg.sources.length
+      ? h("ul", { class: "kb-list" }, cfg.sources.map((x) => h("li", null,
+        h("span", { class: "fnode-ic sm" }, icon(x.kind === "website" ? "globe" : "book", 16)),
+        h("span", { class: "kb-name" }, h("strong", { text: x.name || x.url || "Dokument" }), h("span", { class: "meta", text: `${(x.chars || 0).toLocaleString("de-DE")} Zeichen${x.url ? ` · ${x.url.replace(/^https?:\/\//, "").slice(0, 40)}` : ""}` })),
+        h("button", { type: "button", class: "x", "aria-label": `${x.name || "Quelle"} entfernen`, text: "×", onclick: () => { cfg.sources = cfg.sources.filter((y) => y.id !== x.id); changed({ prompt: true }); draw(); } }))))
+      : h("div", { class: "panel empty", text: "Noch keine Quellen." });
+    const parts = [
+      h("span", { class: "lbl", text: "Wissensquelle" }),
+      h("div", { class: "kb-tabs" }, tab("file", "upload", "Datei hochladen"), tab("website", "globe", "Website importieren")),
+      src,
+      kb.error ? h("p", { class: "msg err", role: "alert", text: kb.error }) : null,
+      h("h4", { text: `Gespeicherte Quellen (${cfg.sources.length})` }), list,
+      h("p", { class: "hint", text: `${kbChars().toLocaleString("de-DE")} Zeichen gespeichert. Der Agent nutzt bis zu 150.000 Zeichen davon; Vektor-Suche für größere Mengen gibt es noch nicht.` }),
+    ].filter(Boolean);
+    body.replaceChildren(...parts);
+  }
+  draw();
+  document.body.append(overlay);
+  document.addEventListener("keydown", onKey);
+  overlay.querySelector("button")?.focus();
+}
+
 let projectState = { busy: false, error: "", repoInput: "", suggestions: null };
 
 function projectsCard() {
@@ -510,6 +592,9 @@ const BUILDERS = {
     f.append(toggle("emojis", "Emojis erlauben"));
   },
   wissen(f) {
+    f.append(h("div", { class: "import kb-card-link" },
+      h("div", null, h("strong", { text: "Wissensdatenbank" }), h("p", { class: "hint", text: cfg.sources.length ? `${cfg.sources.length} Quellen, ${kbChars().toLocaleString("de-DE")} Zeichen.` : "Lade Dateien hoch oder lies ganze Websites ein, auch mit vielen Unterseiten." })),
+      h("button", { type: "button", class: "btn primary", onclick: openKnowledge }, icon("book", 16), "Quellen verwalten")));
     f.append(projectsCard());
     if (cfg.source?.missing?.length) {
       f.append(h("div", { class: "note" }, h("strong", { text: "Auf der Website fehlte: " }), cfg.source.missing.join(" · ")));
@@ -621,7 +706,7 @@ const BUILDERS = {
     const sel = cfg.integrations.find((i) => i.id === flowSelected);
     const triggers = [node("chat", "Chat-Widget", "Website", { on: true })];
     if (cfg.phoneEnabled) triggers.push(node("phone", "Telefon", "Anrufe", { on: true }));
-    const sources = (cfg.faqs.length ? 1 : 0) + (cfg.knowledge.trim() ? 1 : 0) + cfg.projects.length;
+    const sources = (cfg.faqs.length ? 1 : 0) + (cfg.knowledge.trim() ? 1 : 0) + cfg.projects.length + cfg.sources.length;
     const outs = [
       node("book", "Wissen", `${sources} Quellen`, { onclick: () => go("wissen"), on: sources > 0 }),
       node("phone", "Telefon", cfg.phoneEnabled ? "aktiv" : "aus", { onclick: () => go("phone"), off: !cfg.phoneEnabled }),

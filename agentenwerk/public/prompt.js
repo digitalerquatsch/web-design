@@ -26,6 +26,7 @@ export const BASE = {
   color: "#3a46c9", position: "right", welcome: "Hallo! Wie kann ich Ihnen helfen?", quickReplies: [], initials: "",
   logoUrl: "", widgetTitle: "", widgetTheme: "light",
   phoneEnabled: false, phoneGreeting: "",
+  sources: [], // knowledge base: [{id, kind:"file"|"website", name, url, text, chars, addedAt}]
   integrations: [], // outgoing targets: [{id, type, enabled, events, to, chatId, has, hint}]
   projects: [], // GitHub projects the agent knows: [{repo, url, name, summary, features, usage, tech, faqs, importedAt}]
   promptOverride: null,
@@ -109,7 +110,8 @@ export function fromTemplate(key) {
 // never break the prompt builder.
 export function withDefaults(cfg) {
   const out = { ...clone(BASE), ...(cfg || {}) };
-  for (const k of ["tone", "faqs", "leadFields", "quickReplies", "allowedOrigins", "projects", "integrations"]) if (!Array.isArray(out[k])) out[k] = clone(BASE[k]);
+  for (const k of ["tone", "faqs", "leadFields", "quickReplies", "allowedOrigins", "projects", "integrations", "sources"]) if (!Array.isArray(out[k])) out[k] = clone(BASE[k]);
+  out.sources = out.sources.filter((x) => x && typeof x.text === "string" && x.text.trim());
   out.projects = out.projects.filter((p) => p && typeof p.repo === "string" && typeof p.summary === "string");
   for (const k of ["name", "company", "industry", "website", "role", "knowledge", "hours", "services", "bookingRules", "handoff", "dos", "donts", "privacyUrl", "welcome", "initials", "logoUrl", "widgetTitle", "phoneGreeting"]) if (typeof out[k] !== "string") out[k] = "";
   if (out.widgetTheme !== "dark") out.widgetTheme = "light";
@@ -147,6 +149,17 @@ export function buildPrompt(cfg) {
     if (p.faqs?.length) lines.push(p.faqs.map((f) => `F: ${f.q}\nA: ${f.a}`).join("\n"));
     return lines.join("\n");
   }).join("\n\n"));
+  if (c.sources.length) {
+    let budget = 150000, cut = 0;
+    const parts = [];
+    for (const x of c.sources) {
+      if (budget <= 0) { cut++; continue; }
+      const t = x.text.trim().slice(0, budget);
+      budget -= t.length;
+      parts.push(`## Quelle: ${x.name || x.url || "Dokument"}${x.url ? ` (${x.url})` : ""}\n${t}`);
+    }
+    k.push("Wissensdatenbank:\n" + parts.join("\n\n") + (cut ? `\n(${cut} weitere Quellen passen nicht in den Speicher.)` : ""));
+  }
   L.push(`\n# Wissen\n${k.length ? k.join("\n\n") : "(Noch kein Wissen hinterlegt.)"}\nNutze ausschließlich dieses Wissen für Fakten über das Unternehmen. Wenn du etwas nicht weißt, sag das offen und biete an, das Anliegen weiterzugeben. Erfinde keine Preise, Zeiten oder Zusagen.`);
 
   const fields = c.leadFields.map((f) => LEAD_FIELDS[f]).join(", ") || "Name, E-Mail";

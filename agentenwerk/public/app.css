@@ -731,3 +731,26 @@ button.fnode { cursor: pointer; }
 .fnode.add { border-style: dashed; background: transparent; cursor: pointer; }
 .fnode.agent { min-width: 220px; max-width: 280px; }
 .panel.inner { display: grid; gap: 14px; margin-top: 16px; }
+
+/* Knowledge base dialog */
+.kb-overlay { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 16px; background: rgba(0, 0, 0, .6); }
+.kb-card { width: min(560px, 100%); max-height: calc(100dvh - 32px); display: grid; grid-template-rows: auto 1fr auto; background: var(--bg); border: 1px solid var(--line); border-radius: 20px; overflow: hidden; }
+.kb-head { display: flex; gap: 12px; align-items: flex-start; padding: 18px; border-bottom: 1px solid var(--line); }
+.kb-head > div { flex: 1; min-width: 0; }
+.kb-head h3 { margin: 0 0 2px; }
+.kb-body { display: grid; gap: 14px; padding: 18px; overflow-y: auto; align-content: start; }
+.kb-foot { display: flex; justify-content: flex-end; padding: 14px 18px; border-top: 1px solid var(--line); }
+.kb-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.kb-tab { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 14px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.kb-tab[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.kb-url { display: flex; gap: 10px; }
+.kb-url .input { flex: 1; min-width: 0; }
+.kb-drop { display: grid; gap: 8px; justify-items: start; }
+.check { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; }
+.check input { margin-top: 4px; }
+.kb-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; max-height: 260px; overflow-y: auto; }
+.kb-list li { display: flex; gap: 10px; align-items: center; padding: 8px 10px; border: 1px solid var(--line); border-radius: 12px; }
+.kb-name { flex: 1; min-width: 0; display: grid; }
+.kb-name strong, .kb-name .meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fnode-ic.sm { width: 30px; height: 30px; border-radius: 9px; flex: none; }
+.kb-card-link { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }

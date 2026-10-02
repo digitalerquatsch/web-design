@@ -316,3 +316,7 @@ Im Editor unter **Verbindungen** siehst du den Ablauf als Diagramm: Chat-Widget/
 Webhook-Adressen und Tokens sind schreibgeschützt: der Browser sieht nur „gespeichert“. Ziele müssen https nutzen und öffentlich erreichbar sein (interne Adressen werden abgelehnt, Weiterleitungen nicht verfolgt). Ein defekter Eintrag stört den Chat nie. Tests aus dem Testchat lösen nichts aus; „Test senden“ schickt eine Probenachricht.
 
 Eine direkte Google-Anmeldung (Gmail-API, Kalender per OAuth) gibt es nicht; dafür der Weg über E-Mail (SMTP) oder Webhook.
+
+## Wissensdatenbank
+
+Im Schritt **Wissen** öffnet „Quellen verwalten“ den Dialog wie bei botbuildr: **Datei hochladen** (Text, Markdown, CSV, JSON, HTML, bis 2 MB) oder **Website importieren**. „Gründlich einlesen“ liest bis zu 80 Seiten statt 8 und legt jede Unterseite einzeln als Quelle ab (zählt wie eine Analyse im Kontingent, dauert bis zu vier Minuten). Der Agent bekommt bis zu 150.000 Zeichen der Quellen in den Prompt; eine Vektor-Suche für größere Mengen gibt es noch nicht. PDF und Word bitte vorher als Text speichern.

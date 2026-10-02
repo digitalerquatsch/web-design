@@ -36,6 +36,7 @@ function send(res, status, body, headers = {}) {
   res.end(data);
 }
 
+const AGENT_BODY = 2_500_000; // an agent can carry a knowledge base
 async function readJson(req, limit = 400_000) {
   let size = 0;
   const chunks = [];
@@ -89,6 +90,14 @@ function sanitizeAgent(input, id, existing = null) {
     features: (Array.isArray(p.features) ? p.features : []).slice(0, 8).map((x) => clip(x, 240)),
     faqs: (Array.isArray(p.faqs) ? p.faqs : []).slice(0, 6).filter((f) => f && typeof f.q === "string" && typeof f.a === "string").map((f) => ({ q: clip(f.q, 200), a: clip(f.a, 700) })),
   }));
+  const sid = new Set();
+  a.sources = a.sources.slice(0, 100).map((x) => ({
+    id: /^[\w-]{4,30}$/.test(x.id || "") && !sid.has(x.id) ? x.id : newId(),
+    kind: x.kind === "website" ? "website" : "file", name: clip(x.name, 160), url: /^https?:\/\/[^\s"'<>]{3,500}$/i.test(x.url || "") ? x.url : "",
+    text: clip(x.text, 60000), addedAt: Number(x.addedAt) || 0,
+  })).map((x) => { sid.add(x.id); return { ...x, chars: x.text.length }; }).filter((x) => x.text.trim());
+  let room = 1_200_000;
+  a.sources = a.sources.filter((x) => (room -= x.chars) >= 0);
   try { a.integrations = sanitizeIntegrations(input.integrations, existing?.integrations); } catch (e) { if (e instanceof IntegrationError) throw new HttpError(400, e.message); throw e; }
   return a;
 }
@@ -626,7 +635,7 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
       return send(res, 200, agents.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).map(maskAgent));
     }
     if (p === "/api/agents" && req.method === "POST") {
-      const body = await readJson(req);
+      const body = await readJson(req, AGENT_BODY);
       const agent = { ...sanitizeAgent(body, newId()), ownerId: ws, batchId: undefined, preview: undefined, createdAt: Date.now(), updatedAt: Date.now() };
       await store.put("agents", agent);
       return send(res, 201, maskAgent(agent));
@@ -649,6 +658,28 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
       }
       return out.end();
     }
+    if (p === "/api/sources/website" && req.method === "POST") {
+      if (me.role === "kunde") throw new HttpError(403, "Kein Zugriff.");
+      if (!analyzeLimit.allow(clientIp(req))) throw new HttpError(429, "Zu viele Importe. Bitte eine Minute warten.");
+      try { await consume(ws, "analyses"); } catch (e) { if (e instanceof QuotaError) throw new HttpError(429, e.message); throw e; }
+      const body = await readJson(req, 5_000);
+      const deep = body.thorough === true;
+      const out = sse(res);
+      try {
+        const site = await crawl(body.url, { deep, maxPages: deep ? 80 : 8, perPageChars: deep ? 20000 : 12000, totalChars: deep ? 400000 : 70000, onProgress: (e) => out.event(e.type === "page" ? "page" : "status", e) });
+        const pages = site.pages.filter((pg) => pg.text.length > 80);
+        if (!pages.length) throw new CrawlError("Auf der Website war kaum Text zu finden. Wird sie erst per JavaScript aufgebaut? Dann füge die Inhalte als Datei hinzu.");
+        const at = Date.now();
+        const sources = deep
+          ? pages.map((pg) => ({ id: newId(), kind: "website", name: pg.title || pg.url, url: pg.url, text: pg.text.slice(0, 60000), addedAt: at }))
+          : [{ id: newId(), kind: "website", name: new URL(site.url).hostname, url: site.url, text: pages.map((pg) => `## ${pg.title || pg.url}\n${pg.text}`).join("\n\n").slice(0, 60000), addedAt: at }];
+        out.event("result", { sources: sources.map((x) => ({ ...x, chars: x.text.length })), failed: site.failed.length });
+      } catch (err) {
+        if (!(err instanceof CrawlError)) console.error("source import error:", err?.message || err);
+        out.event("error", { message: err instanceof CrawlError ? err.message : "Der Import ist fehlgeschlagen. Bitte noch einmal versuchen." });
+      }
+      return out.end();
+    }
     if (p === "/api/projects/import" && req.method === "POST") {
       if (!ai.configured) throw new HttpError(503, `${ai.keyName || "Der KI-Schlüssel"} fehlt. Trage ihn unter System ein.`);
       if (!analyzeLimit.allow(clientIp(req))) throw new HttpError(429, "Zu viele Importe. Bitte eine Minute warten.");
@@ -665,7 +696,7 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
       }
     }
     if (p === "/api/test-chat" && req.method === "POST") {
-      const body = await readJson(req);
+      const body = await readJson(req, AGENT_BODY);
       const stored = await store.get("agents", String(body.agent?.id || "test"));
       const agent = sanitizeAgent(body.agent || {}, String(body.agent?.id || "test"), stored);
       if (stored ? !canSeeAgent(me, stored) : me.role === "kunde") throw new HttpError(403, "Dieser Agent gehört nicht zu deinem Zugang.");
@@ -678,7 +709,7 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
       if (!agent) throw new HttpError(404, "Agent nicht gefunden.");
       if (!sub && req.method === "GET") return send(res, 200, maskAgent(agent));
       if (!sub && req.method === "PUT") {
-        const body = await readJson(req);
+        const body = await readJson(req, AGENT_BODY);
         // Ownership and autopilot links stay as stored, whatever the client sends.
         const next = { ...sanitizeAgent(body, id, agent), ownerId: agent.ownerId, batchId: agent.batchId, preview: agent.preview, prospect: agent.prospect, createdAt: agent.createdAt, updatedAt: Date.now() };
         await store.put("agents", next);

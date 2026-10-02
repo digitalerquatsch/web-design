@@ -291,7 +291,7 @@ function dropBoilerplate(pages) {
   return pages.map((p, i) => i === 0 ? p : { ...p, text: p.text.split("\n").filter((l) => (counts.get(l) || 0) < threshold).join("\n") });
 }
 
-export async function crawlSite(input, { maxPages = 8, perPageChars = 12000, totalChars = 70000, onProgress = () => {}, fetchImpl = fetch, lookup = dns.lookup } = {}) {
+export async function crawlSite(input, { deep = false, maxPages = 8, perPageChars = 12000, totalChars = 70000, onProgress = () => {}, fetchImpl = fetch, lookup = dns.lookup } = {}) {
   const start = normalizeUrl(input);
   const opts = { fetchImpl, lookup };
   onProgress({ type: "status", message: `Lade ${start.hostname} …` });
@@ -301,7 +301,7 @@ export async function crawlSite(input, { maxPages = 8, perPageChars = 12000, tot
 
   let candidates = rankLinks(home.links, home.url, maxPages - 1);
   let privacyUrl = findPrivacyUrl(home.links);
-  if (candidates.length < 3) {
+  if (deep || candidates.length < 3) {
     try {
       const sm = await fetchPage(new URL("/sitemap.xml", home.url).href, { ...opts, accept: "application/xml", maxBytes: 1_000_000 });
       const extra = rankLinks([...home.links, ...sitemapLinks(sm.body, home.url)], home.url, maxPages - 1);
