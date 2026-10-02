@@ -36,14 +36,17 @@ export function mountJarvis({ root, api, h, icon }) {
 
   function connectCard() {
     const url = fresh?.ingestUrl || data.ingestUrl;
-    const cmd = `AGENTENWERK_URL=${url.replace(/\/api\/public.*$/, "")} AGENTENWERK_TOKEN=${fresh ? fresh.token : "<Token>"} python3 scripts/agentenwerk_sync.py`;
+    const site = url.replace(/\/api\/public.*$/, "");
+    const tok = fresh ? fresh.token : "<Token>";
+    const cmd = `$env:AGENTENWERK_URL="${site}"; $env:AGENTENWERK_TOKEN="${tok}"; python scripts\\agentenwerk_sync.py`;
+    const cmdMac = `AGENTENWERK_URL=${site} AGENTENWERK_TOKEN=${tok} python3 scripts/agentenwerk_sync.py`;
     const copyBtn = h("button", { type: "button", class: "btn", text: "Befehl kopieren" });
     copyBtn.addEventListener("click", () => copy(cmd, copyBtn));
     return h("section", { class: "panel" },
       h("h3", { text: data.connected ? "Verbindung" : "JARVIS verbinden" }),
-      h("p", { class: "hint", text: "JARVIS bleibt auf deinem Mac. Ein kleines Skript schickt alle 30 Sekunden den Stand hierher; dieser Server ruft nie bei dir an." }),
+      h("p", { class: "hint", text: "JARVIS bleibt auf deinem Mac. Ein kleines Skript auf deinem Rechner schickt alle 30 Sekunden den Stand hierher; dieser Server ruft nie bei dir an." }),
       fresh ? h("div", { class: "field" }, h("label", { text: "Dein Token (wird nur jetzt angezeigt)" }), h("input", { class: "input mono", readonly: "", value: fresh.token }),
-        h("p", { class: "hint", text: "Im Terminal auf dem Mac, im JARVIS-Ordner:" }), h("pre", { class: "mono", text: cmd }), copyBtn) : null,
+        h("p", { class: "hint", text: "Windows (PowerShell, im JARVIS-Ordner):" }), h("pre", { class: "mono", text: cmd }), copyBtn, h("p", { class: "hint", text: "Mac/Linux:" }), h("pre", { class: "mono", text: cmdMac })) : null,
       h("div", { class: "toolbar" },
         h("button", { type: "button", class: "btn primary", onclick: createToken, text: data.connected ? "Neues Token" : "Token erzeugen" }),
         data.connected ? h("button", { type: "button", class: "btn ghost", onclick: disconnect, text: "Trennen" }) : null));
@@ -58,7 +61,7 @@ export function mountJarvis({ root, api, h, icon }) {
   function render() {
     if (!data) { root.replaceChildren(h("p", { class: "hint", text: message || "Lädt …" })); return; }
     const snap = data.snapshot;
-    const parts = [h("div", { class: "page-head" }, h("div", null, h("span", { class: "eyebrow", text: "Dein Mac" }), h("h2", { text: "JARVIS" })))];
+    const parts = [h("div", { class: "page-head" }, h("div", null, h("span", { class: "eyebrow", text: "Dein Rechner" }), h("h2", { text: "JARVIS" })))];
     if (message) parts.push(h("p", { class: "msg err", text: message }));
     parts.push(connectCard(), sync());
     if (snap) {

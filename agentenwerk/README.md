@@ -293,7 +293,9 @@ Die Seite **JARVIS** (nur Admins) zeigt Runs, Sessions, die Abo-Auslastung deine
 JARVIS bleibt auf dem Mac (nur localhost). Ein kleines Skript schickt den Stand an diesen Server; der Server ruft nie bei dir an.
 
 1. In Agentenwerk: **JARVIS → Token erzeugen**. Das Token wird nur einmal angezeigt und nur als Hash gespeichert.
-2. Auf dem Mac, im JARVIS-Ordner, mit laufendem JARVIS:
+2. Windows (PowerShell, im JARVIS-Ordner, mit laufendem JARVIS):
+   `$env:AGENTENWERK_URL="https://deine-domain.de"; $env:AGENTENWERK_TOKEN="jv_…"; python scripts\agentenwerk_sync.py`
+   Mac/Linux:
    `AGENTENWERK_URL=https://deine-domain.de AGENTENWERK_TOKEN=jv_… python3 scripts/agentenwerk_sync.py`
 3. Optional: `AGENTENWERK_NO_PROMPTS=1` lässt Prompt-Texte weg, `AGENTENWERK_INTERVAL=60` ändert den Takt.
 
