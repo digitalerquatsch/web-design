@@ -754,3 +754,19 @@ button.fnode { cursor: pointer; }
 .kb-name strong, .kb-name .meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fnode-ic.sm { width: 30px; height: 30px; border-radius: 9px; flex: none; }
 .kb-card-link { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+
+/* Agent cards: integrations row, menu, selection */
+.agent-ints { display: grid; gap: 6px; padding: 0 2px; }
+.ints-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-height: 34px; }
+.int-ic { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; border: 1px solid var(--line); color: var(--muted); }
+.int-ic.on { color: var(--accent); border-color: var(--accent-line); background: var(--accent-soft); }
+.agent-card-top { align-items: center; }
+.agent-card-top .kebab { margin-left: auto; width: 34px; height: 34px; border-radius: 10px; border: 1px solid var(--line); background: transparent; font-size: 18px; line-height: 1; }
+.agent-card-top .pick { width: 20px; height: 20px; accent-color: var(--accent); }
+.agent-card.picked { box-shadow: var(--glow); }
+.ag-menu { position: absolute; z-index: 70; min-width: 170px; display: grid; padding: 6px; background: var(--raised); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); }
+.ag-menu button { text-align: left; padding: 10px 12px; border: 0; border-radius: 9px; background: transparent; }
+.ag-menu button:hover, .ag-menu button:focus-visible { background: var(--accent-soft); }
+.ag-menu button.danger { color: var(--danger); }
+.btn.danger { border-color: var(--danger); color: var(--danger); }
+.btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }

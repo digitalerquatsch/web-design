@@ -83,3 +83,29 @@ test("API never returns secrets and keeps them across saves; agents of others st
   assert.equal((await call("POST", `/api/agents/${made.body.id}/integrations/nope/test`, {})).status, 404);
   server.close(); await fs.rm(dir, { recursive: true, force: true });
 });
+
+test("duplicate and bulk delete stay inside the workspace", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "agentenwerk-dup-"));
+  const server = http.createServer(createApp({ dataDir: dir, ai: { configured: true, provider: "mistral", model: "f", isApiError: () => false } }));
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const base = `http://localhost:${server.address().port}`;
+  let cookie = "";
+  const call = async (method, p, body) => {
+    const r = await fetch(base + p, { method, headers: { ...H, ...(cookie ? { cookie } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
+    const set = r.headers.get("set-cookie"); if (set) cookie = set.split(";")[0];
+    const t = await r.text(); return { status: r.status, body: t ? JSON.parse(t) : null };
+  };
+  await call("POST", "/api/auth/setup", { name: "A", email: "a@x.de", password: "sehr-sicheres-pw" });
+  const a = (await call("POST", "/api/agents", { name: "Eins", integrations: [{ type: "email", to: "a@b.de" }] })).body;
+  const b = (await call("POST", "/api/agents", { name: "Zwei" })).body;
+  const dup = await call("POST", `/api/agents/${a.id}/duplicate`, {});
+  assert.equal(dup.status, 201);
+  assert.equal(dup.body.name, "Eins (Kopie)");
+  assert.notEqual(dup.body.id, a.id);
+  assert.equal(dup.body.integrations[0].to, "a@b.de");
+  assert.equal((await call("GET", "/api/agents")).body.length, 3);
+  const del = await call("POST", "/api/agents/bulk-delete", { ids: [a.id, b.id, "gibtsnicht"] });
+  assert.equal(del.body.deleted, 2);
+  assert.equal((await call("GET", "/api/agents")).body.length, 1);
+  server.close(); await fs.rm(dir, { recursive: true, force: true });
+});

@@ -640,6 +640,13 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
       await store.put("agents", agent);
       return send(res, 201, maskAgent(agent));
     }
+    if (p === "/api/agents/bulk-delete" && req.method === "POST") {
+      const body = await readJson(req, 20_000);
+      const wanted = (Array.isArray(body.ids) ? body.ids : []).filter((x) => typeof x === "string").slice(0, 500);
+      const mine = (await store.list("agents", (a) => wanted.includes(a.id) && canSeeAgent(me, a))).map((a) => a.id);
+      await deleteAgents(mine);
+      return send(res, 200, { deleted: mine.length });
+    }
     if (p === "/api/analyze" && req.method === "POST") {
       if (!ai.configured) throw new HttpError(503, `${ai.keyName || "Der KI-Schlüssel"} fehlt. Trage ihn in die .env ein und starte den Server neu.`);
       if (!analyzeLimit.allow(clientIp(req))) throw new HttpError(429, "Zu viele Analysen. Bitte eine Minute warten.");
@@ -714,6 +721,11 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
         const next = { ...sanitizeAgent(body, id, agent), ownerId: agent.ownerId, batchId: agent.batchId, preview: agent.preview, prospect: agent.prospect, createdAt: agent.createdAt, updatedAt: Date.now() };
         await store.put("agents", next);
         return send(res, 200, maskAgent(next));
+      }
+      if (sub === "/duplicate" && req.method === "POST") {
+        const copy = { ...agent, id: newId(), name: `${agent.name || "Agent"} (Kopie)`.slice(0, 80), batchId: undefined, preview: undefined, prospect: undefined, createdAt: Date.now(), updatedAt: Date.now() };
+        await store.put("agents", copy);
+        return send(res, 201, maskAgent(copy));
       }
       const it = sub && sub.match(/^\/integrations\/([\w-]+)\/test$/);
       if (it && req.method === "POST") {
