@@ -26,6 +26,7 @@ export const BASE = {
   color: "#3a46c9", position: "right", welcome: "Hallo! Wie kann ich Ihnen helfen?", quickReplies: [], initials: "",
   logoUrl: "", widgetTitle: "", widgetTheme: "light",
   phoneEnabled: false, phoneGreeting: "",
+  projects: [], // GitHub projects the agent knows: [{repo, url, name, summary, features, usage, tech, faqs, importedAt}]
   promptOverride: null,
   allowedOrigins: [],
   source: null, // { url, importedAt, pages: [{url, title}], missing: [] } after a website import
@@ -107,7 +108,8 @@ export function fromTemplate(key) {
 // never break the prompt builder.
 export function withDefaults(cfg) {
   const out = { ...clone(BASE), ...(cfg || {}) };
-  for (const k of ["tone", "faqs", "leadFields", "quickReplies", "allowedOrigins"]) if (!Array.isArray(out[k])) out[k] = clone(BASE[k]);
+  for (const k of ["tone", "faqs", "leadFields", "quickReplies", "allowedOrigins", "projects"]) if (!Array.isArray(out[k])) out[k] = clone(BASE[k]);
+  out.projects = out.projects.filter((p) => p && typeof p.repo === "string" && typeof p.summary === "string");
   for (const k of ["name", "company", "industry", "website", "role", "knowledge", "hours", "services", "bookingRules", "handoff", "dos", "donts", "privacyUrl", "welcome", "initials", "logoUrl", "widgetTitle", "phoneGreeting"]) if (typeof out[k] !== "string") out[k] = "";
   if (out.widgetTheme !== "dark") out.widgetTheme = "light";
   out.phoneEnabled = out.phoneEnabled === true;
@@ -136,6 +138,14 @@ export function buildPrompt(cfg) {
   const faqs = c.faqs.filter((f) => f.q.trim() && f.a.trim());
   if (faqs.length) k.push("Häufige Fragen:\n" + faqs.map((f) => `F: ${f.q.trim()}\nA: ${f.a.trim()}`).join("\n"));
   if (c.services.trim()) k.push(`Leistungen und Angebote:\n${c.services.trim()}`);
+  if (c.projects.length) k.push("Projekte, über die du Auskunft gibst:\n" + c.projects.map((p) => {
+    const lines = [`## ${p.name || p.repo} (${p.url || "github.com/" + p.repo})`, p.summary];
+    if (p.features?.length) lines.push("Funktionen:\n" + p.features.map((x) => `- ${x}`).join("\n"));
+    if (p.usage) lines.push(`So benutzt man es:\n${p.usage}`);
+    if (p.tech) lines.push(`Technik: ${p.tech}`);
+    if (p.faqs?.length) lines.push(p.faqs.map((f) => `F: ${f.q}\nA: ${f.a}`).join("\n"));
+    return lines.join("\n");
+  }).join("\n\n"));
   L.push(`\n# Wissen\n${k.length ? k.join("\n\n") : "(Noch kein Wissen hinterlegt.)"}\nNutze ausschließlich dieses Wissen für Fakten über das Unternehmen. Wenn du etwas nicht weißt, sag das offen und biete an, das Anliegen weiterzugeben. Erfinde keine Preise, Zeiten oder Zusagen.`);
 
   const fields = c.leadFields.map((f) => LEAD_FIELDS[f]).join(", ") || "Name, E-Mail";

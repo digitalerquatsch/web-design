@@ -10,6 +10,7 @@ import { createAuth, AuthError, ROLES, STATUSES, COOKIE, parseCookies, publicUse
 import { fromEnv, loadSystem, maskedSystem, applySystemUpdate, SystemError, billingEnabled, phoneEnabled, instagramUrl } from "./system.js";
 import { createStripe, verifyWebhook, BillingError, ACTIVE_BILLING } from "./billing.js";
 import { validTwilioRequest, speakable, phoneGreeting, twiml } from "./voice.js";
+import { createGithub, summarizeProject, GithubError } from "./github.js";
 import { withDefaults, publicView } from "../public/prompt.js";
 import { parseTable, mapRows, toCsv, TableError } from "./table.js";
 import { createAutopilot, summarize, ROW_STEPS } from "./autopilot.js";
@@ -78,10 +79,18 @@ function sanitizeAgent(input, id) {
   a.color = /^#[0-9a-f]{6}$/i.test(a.color) ? a.color : "#3a46c9";
   a.logoUrl = /^https?:\/\/[^\s"'<>]{3,500}$/i.test(a.logoUrl) ? a.logoUrl : "";
   a.widgetTitle = a.widgetTitle.slice(0, 40);
+  // Projects come from the import route; from the client only the shape and sizes are accepted.
+  const clip = (s, n) => String(s ?? "").slice(0, n);
+  a.projects = a.projects.slice(0, 12).filter((p) => /^[\w.-]+\/[\w.-]+$/.test(p.repo)).map((p) => ({
+    repo: p.repo, url: /^https:\/\/github\.com\//.test(p.url || "") ? p.url : `https://github.com/${p.repo}`,
+    name: clip(p.name, 120), summary: clip(p.summary, 1200), usage: clip(p.usage, 2500), tech: clip(p.tech, 300), private: Boolean(p.private), importedAt: Number(p.importedAt) || 0,
+    features: (Array.isArray(p.features) ? p.features : []).slice(0, 8).map((x) => clip(x, 240)),
+    faqs: (Array.isArray(p.faqs) ? p.faqs : []).slice(0, 6).filter((f) => f && typeof f.q === "string" && typeof f.a === "string").map((f) => ({ q: clip(f.q, 200), a: clip(f.a, 700) })),
+  }));
   return a;
 }
 
-export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl = crawlSite, analyze = analyzeSite, screenshotter = null, autopilotConcurrency = 2, agency = {}, mailer = null, factories = null, env = {}, stripeFetch } = {}) {
+export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl = crawlSite, analyze = analyzeSite, screenshotter = null, autopilotConcurrency = 2, agency = {}, mailer = null, factories = null, env = {}, stripeFetch, githubFetch } = {}) {
   const store = new Store(dataDir);
   const screenshotDir = path.join(dataDir, "screenshots");
 
@@ -620,6 +629,21 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
         out.event("error", { message: err instanceof CrawlError ? err.message : (err?.code === "refusal" ? err.message : "Die Analyse ist fehlgeschlagen. Bitte noch einmal versuchen.") });
       }
       return out.end();
+    }
+    if (p === "/api/projects/import" && req.method === "POST") {
+      if (!ai.configured) throw new HttpError(503, `${ai.keyName || "Der KI-Schlüssel"} fehlt. Trage ihn unter System ein.`);
+      if (!analyzeLimit.allow(clientIp(req))) throw new HttpError(429, "Zu viele Importe. Bitte eine Minute warten.");
+      const body = await readJson(req, 5_000);
+      try { await consume(ws, "analyses"); } catch (e) { if (e instanceof QuotaError) throw new HttpError(429, e.message); throw e; }
+      try {
+        const repo = await createGithub({ token: sys.githubToken, fetchImpl: githubFetch }).fetchRepo(body.repo);
+        if (!repo.readme && !repo.description) throw new GithubError("In diesem Repository steht weder ein README noch eine Beschreibung. Daraus kann der Agent nichts lernen.", 422);
+        return send(res, 200, { project: await summarizeProject(repo, { ai }) });
+      } catch (e) {
+        if (e instanceof GithubError) throw new HttpError(e.status === 502 ? 502 : e.status, e.message);
+        if (e?.code === "refusal" || e?.code === "invalid_output" || e?.code === "max_tokens") throw new HttpError(502, "Die Zusammenfassung ist fehlgeschlagen. Bitte noch einmal versuchen.");
+        throw e;
+      }
     }
     if (p === "/api/test-chat" && req.method === "POST") {
       const body = await readJson(req);

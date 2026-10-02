@@ -272,7 +272,7 @@ function toggle(key, label, rerender) {
 const SECTIONS = [
   { id: "basis", title: "Grundlagen", lead: "Lies deine Website ein oder wähle eine Vorlage. Beides füllt alle Bereiche vor.", done: () => !!cfg.name.trim() && !!(cfg.company.trim() || cfg.industry.trim()) },
   { id: "stil", title: "Persönlichkeit", lead: "Wie klingt dein Agent? Ton, Anrede und Länge der Antworten.", done: () => cfg.tone.length > 0 },
-  { id: "wissen", title: "Wissen", lead: "Alles, was der Agent über dein Unternehmen wissen muss. Er nutzt nur, was hier steht.", done: () => cfg.knowledge.trim().length > 40 || cfg.faqs.length > 0 },
+  { id: "wissen", title: "Wissen", lead: "Alles, was der Agent über dein Unternehmen und deine Projekte wissen muss. Er nutzt nur, was hier steht.", done: () => cfg.knowledge.trim().length > 40 || cfg.faqs.length > 0 || cfg.projects.length > 0 },
   { id: "ziele", title: "Ziel & Aktionen", lead: "Was soll am Ende einer Unterhaltung herauskommen?", done: () => !!cfg.goal && cfg.leadFields.length > 0 },
   { id: "regeln", title: "Regeln", lead: "Leitplanken: was der Agent immer tun soll und was nie.", done: () => !!(cfg.dos.trim() || cfg.donts.trim()) },
   { id: "design", title: "Widget", lead: "So erscheint der Chat auf deiner Website. Die Vorschau rechts zeigt es live.", done: () => !!cfg.welcome.trim() },
@@ -408,6 +408,50 @@ function importBox() {
   return box;
 }
 
+/* ---------- projects: GitHub repositories the agent knows ---------- */
+let projectState = { busy: false, error: "", repoInput: "", suggestions: null };
+
+function projectsCard() {
+  const box = h("div", { class: "import", id: "projectsBox" });
+  const redraw = () => box.replaceWith(projectsCard());
+  const input = h("input", { class: "input", id: "f_repo", type: "text", inputmode: "url", autocomplete: "off", spellcheck: "false", placeholder: "digitalerquatsch/jarvis oder https://github.com/…", value: projectState.repoInput });
+  input.addEventListener("input", () => { projectState.repoInput = input.value; });
+  const run = async (repo) => {
+    if (!repo || projectState.busy) return;
+    projectState = { ...projectState, busy: true, error: "" }; redraw();
+    try {
+      const { project } = await api("POST", "/api/projects/import", { repo });
+      const i = cfg.projects.findIndex((p) => p.repo.toLowerCase() === project.repo.toLowerCase());
+      if (i >= 0) cfg.projects[i] = project; else cfg.projects.push(project);
+      projectState.repoInput = "";
+      changed({ rerender: false });
+      resetChat();
+    } catch (e) {
+      if (!(e instanceof AuthError)) projectState.error = e.message;
+    }
+    projectState.busy = false;
+    if (section === "wissen") renderForm();
+  };
+  const form = h("form", { class: "import-row" }, input, h("button", { type: "submit", class: "btn primary", disabled: projectState.busy || null, text: projectState.busy ? "Liest …" : "Projekt einlesen" }));
+  form.addEventListener("submit", (e) => { e.preventDefault(); run(input.value.trim()); });
+  box.append(h("h3", { text: "Deine Projekte" }),
+    h("p", { text: "Gib ein GitHub-Repository an. Agentenwerk liest README und Struktur, fasst das Projekt zusammen und gibt es deinem Agenten als Wissen. Er kann dann erklären, was es ist, was es kann und wie man es benutzt." }), form);
+  if (projectState.error) box.append(h("div", { class: "err-box", text: projectState.error }));
+  if (projectState.busy) box.append(h("p", { class: "hint", text: "Repository wird gelesen und zusammengefasst, das dauert etwa eine halbe Minute …" }));
+  if (cfg.projects.length) {
+    box.append(h("div", { class: "proj-list" }, cfg.projects.map((p) => h("article", { class: "proj" },
+      h("div", { class: "proj-top" }, h("div", null, h("strong", { text: p.name || p.repo }), h("a", { class: "meta", href: p.url, target: "_blank", rel: "noopener", text: p.repo + (p.private ? " · privat" : "") })),
+        h("div", { class: "toolbar" },
+          h("button", { type: "button", class: "btn ghost", disabled: projectState.busy || null, text: "Aktualisieren", onclick: () => run(p.repo) }),
+          h("button", { type: "button", class: "btn ghost danger", text: "Entfernen", onclick: () => { cfg.projects = cfg.projects.filter((x) => x !== p); changed({ rerender: false }); resetChat(); renderForm(); } }))),
+      h("p", { class: "proj-sum", text: p.summary }),
+      p.features?.length ? h("div", { class: "tags" }, p.features.slice(0, 4).map((x) => h("span", { class: "tag", text: x.length > 48 ? x.slice(0, 46) + "…" : x }))) : null,
+      h("span", { class: "meta", text: `${p.faqs?.length || 0} Fragen · eingelesen ${p.importedAt ? new Date(p.importedAt).toLocaleDateString("de-DE") : ""}` })))));
+    box.append(h("p", { class: "hint", text: "Frag deinen Agenten im Testchat rechts zu einem Projekt, um zu prüfen, ob die Antworten stimmen. Nach Änderungen im Repository auf „Aktualisieren“ klicken." }));
+  }
+  return box;
+}
+
 const BUILDERS = {
   basis(f) {
     if (!isKunde()) f.append(importBox());
@@ -442,6 +486,7 @@ const BUILDERS = {
     f.append(toggle("emojis", "Emojis erlauben"));
   },
   wissen(f) {
+    f.append(projectsCard());
     if (cfg.source?.missing?.length) {
       f.append(h("div", { class: "note" }, h("strong", { text: "Auf der Website fehlte: " }), cfg.source.missing.join(" · ")));
     }

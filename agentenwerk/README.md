@@ -51,6 +51,7 @@ Preis, Plätze und Kontingente änderst du jederzeit unter System. Neue Abos zah
 ## Was es kann
 
 - **Website einlesen:** Startseite plus bis zu 7 Unterseiten (Kontakt, Impressum, Leistungen, Preise, FAQ, Über uns). Daraus entstehen Firmenwissen, Öffnungszeiten, Leistungen, 6–10 FAQ mit Antworten, Einstiegsfragen als Buttons, Begrüßung, Markenfarbe und Link zur Datenschutzerklärung. Was auf der Website fehlt, wird als Hinweis angezeigt.
+- **Eigene Projekte als Wissen:** Im Editor unter „Wissen“ ein GitHub-Repository eingeben (z. B. `digitalerquatsch/jarvis`). Agentenwerk liest README, Dateistruktur und ein paar Doku-Dateien, die KI macht daraus Zusammenfassung, Funktionen, Anleitung und typische Fragen. Der Agent kann dann Auskunft zu deinen Projekten geben. Mit „Aktualisieren“ liest er sie neu ein. Private Repos gehen mit einem GitHub-Token unter System.
 - **Konfigurieren in 8 Schritten:** Grundlagen, Persönlichkeit, Wissen, Ziel & Aktionen, Regeln, Widget, System-Prompt, Einbinden. Dazu 6 Vorlagen (Terminbuchung, Kundenservice, Lead-Qualifizierung, Produktberatung, Tischreservierung, Leer).
 - **Testchat** im Builder mit dem aktuellen Stand, auch vor dem Speichern.
 - **Aktionen im Gespräch:** Der Agent speichert Leads (`save_lead`) und Terminanfragen (`book_appointment`). Beides erscheint im Builder unter „Erfasst“, zusammen mit den Gesprächsverläufen.
@@ -74,6 +75,19 @@ Links steht eine Navigation, auf dem Handy über den Menü-Button oben links:
 - **Autopilot**, **Akquise**, **Nutzer:** wie oben beschrieben.
 
 Kunden sehen nur Start, Agenten und Editor.
+
+## Eigene Projekte (GitHub)
+
+Damit dein Agent deine Projekte kennt, zum Beispiel als Berater auf deiner Agentur-Website oder am Telefon:
+
+1. Im Editor des Agenten links auf **Wissen**, oben im Feld „Deine Projekte“ das Repository eintragen: `owner/repo` oder die GitHub-Adresse.
+2. **Projekt einlesen.** Nach etwa einer halben Minute steht das Projekt als Card da, mit Zusammenfassung, Funktionen und Anzahl der Fragen.
+3. Im Testchat rechts fragen, ob die Antworten stimmen. Der Agent nutzt nur, was eingelesen wurde.
+4. Änderungen am Repository kommen mit **Aktualisieren** an. **Entfernen** nimmt ein Projekt wieder aus dem Wissen.
+
+Öffentliche Repositories brauchen keinen Zugang. Für **private** Repositories und mehr Abrufe: unter **System → GitHub (Projekte)** einen Token eintragen (GitHub → Settings → Developer settings → Fine-grained token, nur lesen für die gewünschten Repos). Gelesen wird ausschließlich über `api.github.com`: README, Hauptverzeichnis und wenige Dateien wie `CLAUDE.md`, `SKILL.md`, `AGENTS.md`. Quellcode wird nicht gelesen. Ein Import zählt als eine Website-Analyse im Monatskontingent. README-Texte behandelt die KI als Material, nicht als Anweisung.
+
+Hinweis: Alles, was im README steht, kann der Agent Besuchern erzählen. Bei privaten Repositories also nur einlesen, was öffentlich werden darf.
 
 ## Telefon-Bot
 
@@ -232,6 +246,7 @@ src/screenshot.js    Website-Screenshots mit Playwright (optional)
 src/users.js         Konten, Passwörter (scrypt), Sitzungen, Rollen und Rechte
 src/system.js        Einstellungen aus dem Browser (System-Seite), Schlüssel nur maskiert
 src/billing.js       Stripe: Checkout, Kundenportal, Kündigung, signierte Webhooks
+src/github.js        GitHub-Repo einlesen und für den Agenten zusammenfassen
 src/voice.js         Telefon über Twilio: TwiML, Signaturprüfung, Text fürs Vorlesen
 src/store.js         JSON-Dateien mit atomaren Schreibvorgängen
 src/security.js      Admin-Prüfung, Rate-Limit, erlaubte Domains

@@ -2,7 +2,7 @@
 // editing .env. Environment variables are the defaults; values saved in the
 // browser win. Secrets are never sent back to the browser in full.
 
-export const SECRETS = ["mistralApiKey", "anthropicApiKey", "smtpPass", "stripeSecretKey", "stripeWebhookSecret", "twilioAuthToken"];
+export const SECRETS = ["mistralApiKey", "anthropicApiKey", "smtpPass", "stripeSecretKey", "stripeWebhookSecret", "twilioAuthToken", "githubToken"];
 
 const FIELDS = {
   // general
@@ -16,6 +16,8 @@ const FIELDS = {
   planDailyEmails: "int", planMonthlyAnalyses: "int", planMonthlyChats: "int", termsUrl: "url", privacyUrl: "url", imprintUrl: "url",
   // phone
   twilioAccountSid: "str", twilioAuthToken: "secret", twilioVoice: "str",
+  // projects
+  githubToken: "secret",
 };
 
 export function fromEnv(env = process.env) {
@@ -50,6 +52,7 @@ export function fromEnv(env = process.env) {
     twilioAccountSid: env.TWILIO_ACCOUNT_SID || "",
     twilioAuthToken: env.TWILIO_AUTH_TOKEN || "",
     twilioVoice: env.TWILIO_VOICE || "Polly.Vicki-Neural",
+    githubToken: env.GITHUB_TOKEN || "",
   };
 }
 

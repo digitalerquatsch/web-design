@@ -98,6 +98,10 @@ export function mountSystem({ root, api, h, icon, onSaved }) {
           h("div", { class: "row2" }, field("termsUrl", "AGB", { type: "url" }), field("privacyUrl", "Datenschutzerklärung", { type: "url" })),
           field("imprintUrl", "Impressum", { type: "url" }),
         ], ["planName", "planPrice", "planSeats", "planDailyEmails", "planMonthlyAnalyses", "planMonthlyChats", "stripeSecretKey", "stripeWebhookSecret", "termsUrl", "privacyUrl", "imprintUrl"]),
+        card("GitHub (Projekte)", "bot", [Boolean(s.githubToken.set), s.githubToken.set ? "Token gesetzt" : "nur öffentliche Repos"], [
+          h("p", { class: "hint", text: "Öffentliche Repositories liest Agentenwerk ohne Zugang. Für private Repositories und ein höheres Abruflimit brauchst du einen Token (nur Lesen)." }),
+          field("githubToken", "GitHub Token", { secret: true, hint: "github.com → Settings → Developer settings → Personal access tokens → Fine-grained token, Berechtigung „Contents: Read-only“ und „Metadata: Read-only“ für deine Repos." }),
+        ], ["githubToken"]),
         card("Telefon-Bot", "chat", [phoneOn, phoneOn ? "aktiv" : "aus"], [
           h("p", { class: "hint", text: "Anrufe laufen über eine Telefonnummer bei Twilio. Twilio wandelt Sprache in Text, dein Agent antwortet, Twilio liest die Antwort vor." }),
           field("twilioAccountSid", "Twilio Account SID", { ph: "AC…" }),
