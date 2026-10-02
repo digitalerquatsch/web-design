@@ -53,6 +53,9 @@ export function sanitizeSite(input, prev = {}) {
     aboutEyebrow: clip(i.aboutEyebrow ?? prev.aboutEyebrow, 40), aboutHeading: clip(i.aboutHeading ?? prev.aboutHeading, 100), aboutText: clip(i.aboutText ?? prev.aboutText, 3000),
     imprint: String(i.imprint ?? prev.imprint ?? "").slice(0, 8000), privacy: String(i.privacy ?? prev.privacy ?? "").slice(0, 20000),
     agentId: clip(i.agentId ?? prev.agentId, 40),
+    heroTitle: clip(i.heroTitle ?? prev.heroTitle, 140), heroSub: clip(i.heroSub ?? prev.heroSub, 400), ctaHeading: clip(i.ctaHeading ?? prev.ctaHeading, 100),
+    reviews: Array.isArray(i.reviews) ? i.reviews.slice(0, 12).map((r) => ({ name: clip(r?.name, 60), role: clip(r?.role, 80), text: clip(r?.text, 500) })).filter((r) => r.name && r.text) : (prev.reviews || []),
+    domain: prev.domain || "", domainVerified: Boolean(prev.domainVerified),
     logo: prev.logo || null, photo: prev.photo || null, updatedAt: Date.now(),
   };
   if (s.email && !/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(s.email)) throw new SiteError("Bitte eine gültige E-Mail-Adresse angeben.");
@@ -68,6 +71,13 @@ export function sanitizeSite(input, prev = {}) {
     s.slug = slug;
   }
   return s;
+}
+
+export const HOSTNAME = /^(?=.{4,100}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.){2,}[a-z]{2,24}$/;
+export function normalizeDomain(input) {
+  const d = String(input || "").trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "").replace(/\.$/, "");
+  if (!HOSTNAME.test(d)) throw new SiteError("Bitte eine Subdomain wie www.deine-agentur.de eintragen. Eine Adresse ohne Subdomain (nur deine-agentur.de) kann nicht per CNAME verbunden werden.");
+  return d;
 }
 
 export function readiness(s) {
@@ -133,14 +143,15 @@ function copy(s) {
   };
 }
 
-export function renderSite(s, { agent = null } = {}) {
+export function renderSite(s, { agent = null, base = `/s/${s.slug}`, views = false } = {}) {
   const c = copy(s);
+  if (s.heroTitle) c.h1 = s.heroTitle;
+  if (s.heroSub) c.sub = s.heroSub;
   const dark = s.theme !== "light";
   const ink = inkOn(s.color);
   const ed = s.style === "editorial";
   const logoH = { klein: 28, mittel: 40, gross: 56 }[s.logoSize] || 40;
   const cta = s.bookingUrl || (s.email ? `mailto:${s.email}` : "#");
-  const base = `/s/${s.slug}`;
   const css = `
 :root{--bg:${dark ? "#0d0b12" : "#fbfaf8"};--card:${dark ? "#171320" : "#ffffff"};--ink:${dark ? "#f4eef8" : "#17141c"};--muted:${dark ? "#a99db5" : "#5f5868"};--line:${dark ? "#2c2538" : "#e4dfe8"};--accent:${s.color};--on:${ink};color-scheme:${dark ? "dark" : "light"}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 ${ed ? 'Georgia,"Times New Roman",serif' : 'system-ui,-apple-system,"Segoe UI",Roboto,sans-serif'}}
@@ -161,25 +172,26 @@ section{padding:36px 0}h2{font-size:26px;margin:0 0 18px;${ed ? "font-weight:400
 @media(max-width:560px){.about{grid-template-columns:1fr}}@media(max-width:480px){header .btn{display:none}}
 details{border-bottom:1px solid var(--line);padding:14px 0}summary{cursor:pointer;font-weight:600}details p{color:var(--muted);margin:8px 0 0}
 .cta{text-align:center;padding:48px 0}footer{border-top:1px solid var(--line);padding:22px 0 40px;color:var(--muted);font:14px system-ui,sans-serif;display:flex;flex-wrap:wrap;gap:14px;justify-content:space-between}`;
-  const head = `<header><a class="brand" href="${base}">${s.logo ? `<img src="${base}/logo" alt="">` : ""}<span>${esc(s.agencyName)}</span></a><a class="btn" href="${esc(cta)}">${esc(s.ctaText)}</a></header>`;
+  const head = `<header><a class="brand" href="${base || "/"}">${s.logo ? `<img src="${base}/logo" alt="">` : ""}<span>${esc(s.agencyName)}</span></a><a class="btn" href="${esc(cta)}">${esc(s.ctaText)}</a></header>`;
   const body = `${head}
 <main><div class="hero"><h1>${esc(c.h1)}</h1><p>${esc(c.sub)}</p><a class="btn" href="${esc(cta)}">${esc(s.ctaText)}</a></div>
 <section><div class="grid">${c.benefits.map(([t, d]) => `<div class="card"><h3>${esc(t)}</h3><p>${esc(d)}</p></div>`).join("")}</div></section>
 <section><h2>So läuft es ab</h2><div class="grid">${c.steps.map(([t, d], i) => `<div class="card"><h3>${i + 1}. ${esc(t)}</h3><p>${esc(d)}</p></div>`).join("")}</div></section>
 ${s.showIntegrations ? `<section><h2>Verbindet sich mit deinen Werkzeugen</h2><div class="tools">${TOOLS.map((t) => `<span>${esc(t)}</span>`).join("")}</div></section>` : ""}
 ${s.aboutText.trim() ? `<section><div class="about">${s.photo ? `<img src="${base}/foto" alt="">` : ""}<div>${s.aboutEyebrow ? `<span class="eyebrow">${esc(s.aboutEyebrow)}</span>` : ""}<h2>${esc(s.aboutHeading || `Wer hinter ${s.agencyName} steht`)}</h2>${para(s.aboutText)}</div></div></section>` : ""}
+${s.reviews?.length ? `<section><h2>Stimmen</h2><div class="grid">${s.reviews.map((r) => `<figure class="card" style="margin:0"><p>„${esc(r.text)}“</p><figcaption style="margin-top:10px;font:600 14px system-ui,sans-serif">${esc(r.name)}${r.role ? `<span style="font-weight:400;color:var(--muted)"> · ${esc(r.role)}</span>` : ""}</figcaption></figure>`).join("")}</div></section>` : ""}
 <section><h2>Häufige Fragen</h2>${c.faq.map(([q, a]) => `<details><summary>${esc(q)}</summary><p>${esc(a)}</p></details>`).join("")}</section>
-<div class="cta"><h2>Bereit für den ersten Assistenten?</h2><a class="btn" href="${esc(cta)}">${esc(s.ctaText)}</a></div></main>
+<div class="cta"><h2>${esc(s.ctaHeading || "Bereit für den ersten Assistenten?")}</h2><a class="btn" href="${esc(cta)}">${esc(s.ctaText)}</a></div></main>
 <footer><span>© ${new Date().getFullYear()} ${esc(s.agencyName)}${s.city ? `, ${esc(s.city)}` : ""}</span><span><a href="${base}/impressum">Impressum</a> · <a href="${base}/datenschutz">Datenschutz</a></span></footer>`;
   const widget = agent ? `<script src="/widget.js" data-agent="${esc(agent.id)}" defer></script>` : "";
   return shell(s, `<div class="wrap">${body}</div>${widget}`, css, `${s.agencyName} – KI-Assistenten für ${(NICHES[s.niche] || NICHES.allgemein).who}`, c.sub);
 }
 
-export function renderLegal(s, kind) {
+export function renderLegal(s, kind, base = `/s/${s.slug}`) {
   const css = `body{margin:0;background:#fbfaf8;color:#17141c;font:16px/1.65 system-ui,sans-serif}main{max-width:720px;margin:0 auto;padding:32px 20px 60px}a{color:#17141c}p{margin:0 0 14px}`;
   const title = kind === "impressum" ? "Impressum" : "Datenschutzerklärung";
   const text = kind === "impressum" ? s.imprint : s.privacy;
-  return shell(s, `<main><p><a href="/s/${s.slug}">← ${esc(s.agencyName)}</a></p><h1>${title}</h1>${para(text)}</main>`, css, `${title} – ${s.agencyName}`, "");
+  return shell(s, `<main><p><a href="${base || "/"}">← ${esc(s.agencyName)}</a></p><h1>${title}</h1>${para(text)}</main>`, css, `${title} – ${s.agencyName}`, "");
 }
 
 function shell(s, inner, css, title, description) {

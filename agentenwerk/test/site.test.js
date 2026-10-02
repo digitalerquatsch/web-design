@@ -78,3 +78,65 @@ test("API: save, publish gate, public page, images, uniqueness, workspace isolat
   assert.equal(abo.status, 201);
   server.close(); await fs.rm(dir, { recursive: true, force: true });
 });
+
+function hostGet(port, host, p, ua = "Mozilla/5.0 Test") {
+  return new Promise((resolve, reject) => {
+    http.get({ host: "127.0.0.1", port, path: p, headers: { host, "user-agent": ua } }, (res) => {
+      let b = ""; res.on("data", (c) => { b += c; }); res.on("end", () => resolve({ status: res.statusCode, body: b }));
+    }).on("error", reject);
+  });
+}
+
+test("reviews, text overrides, custom domain with CNAME check, domain-ok, views", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "agentenwerk-dom-"));
+  let cname = [];
+  const server = http.createServer(createApp({ dataDir: dir, publicUrl: "https://agentenwerk.example", resolveCname: async () => { if (!cname.length) throw new Error("ENODATA"); return cname; }, ai: { configured: true, provider: "mistral", model: "f", isApiError: () => false } }));
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const port = server.address().port;
+  const base = `http://localhost:${port}`;
+  let cookie = "";
+  const call = async (method, p, body) => {
+    const r = await fetch(base + p, { method, headers: { ...H, ...(cookie ? { cookie } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
+    const set = r.headers.get("set-cookie"); if (set) cookie = set.split(";")[0];
+    const t = await r.text(); let b = t; try { b = JSON.parse(t); } catch { /* html */ } return { status: r.status, body: b };
+  };
+  await call("POST", "/api/auth/setup", { name: "A", email: "a@x.de", password: "sehr-sicheres-pw" });
+  let r = await call("PUT", "/api/site", { slug: "firma", agencyName: "Firma", email: "a@b.de", imprint: "I", privacy: "P", online: true, heroTitle: "Mein Titel <b>", reviews: [{ name: "Eva", role: "Bäckerei", text: "Super <script>x</script>" }, { name: "", text: "ohne Name" }] });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.reviews.length, 1, "reviews need name and text");
+  const html = await (await fetch(`${base}/s/firma`)).text();
+  assert.match(html, /Mein Titel &lt;b&gt;/);
+  assert.match(html, /Stimmen/);
+  assert.equal(html.includes("<script>x"), false);
+
+  assert.equal((await call("PUT", "/api/site", { domain: "deine-agentur.de" })).status, 400, "apex domain is refused");
+  assert.equal((await call("PUT", "/api/site", { domain: "agentenwerk.example" })).status, 400);
+  r = await call("PUT", "/api/site", { domain: "WWW.Firma-Seite.de" });
+  assert.equal(r.body.domain, "www.firma-seite.de");
+  assert.equal(r.body.domainVerified, false);
+  assert.equal(r.body.cnameTarget, "agentenwerk.example");
+  assert.notEqual((await hostGet(port, "www.firma-seite.de", "/")).body.includes("Firma"), true, "unverified domain does not serve the page");
+  assert.equal((await fetch(`${base}/api/public/domain-ok?domain=www.firma-seite.de`)).status, 404);
+  r = await call("POST", "/api/site/domain/check", {});
+  assert.equal(r.body.ok, false);
+  cname = ["wrong.example."];
+  assert.equal((await call("POST", "/api/site/domain/check", {})).body.ok, false);
+  cname = ["Agentenwerk.example."];
+  assert.equal((await call("POST", "/api/site/domain/check", {})).body.ok, true);
+  assert.equal((await fetch(`${base}/api/public/domain-ok?domain=www.firma-seite.de`)).status, 200);
+  assert.equal((await fetch(`${base}/api/public/domain-ok?domain=anders.example.de`)).status, 404);
+
+  const root = await hostGet(port, "www.firma-seite.de", "/");
+  assert.equal(root.status, 200);
+  assert.match(root.body, /href="\/impressum"/);
+  assert.match(root.body, /Mein Titel/);
+  assert.match((await hostGet(port, "www.firma-seite.de", "/impressum")).body, /Impressum/);
+  for (const p of ["/api/agents", "/api/status", "/api/public/plan", "/index.html", "/app.js"]) assert.equal((await hostGet(port, "www.firma-seite.de", p)).status, 404, `${p} must not be reachable on a customer domain`);
+  await hostGet(port, "www.firma-seite.de", "/", "Googlebot/2.1");
+  const views = (await call("GET", "/api/site")).body.views;
+  assert.equal(views.today, 2, "counted: /s/firma once and the verified custom domain once; bots and legal pages are not");
+  assert.equal(views.series.length, 30);
+  r = await call("PUT", "/api/site", { domain: "" });
+  assert.equal(r.body.domain, "");
+  server.close(); await fs.rm(dir, { recursive: true, force: true });
+});

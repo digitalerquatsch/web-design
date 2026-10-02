@@ -11,7 +11,8 @@ import { fromEnv, loadSystem, maskedSystem, applySystemUpdate, SystemError, bill
 import { createStripe, verifyWebhook, BillingError, ACTIVE_BILLING } from "./billing.js";
 import { validTwilioRequest, speakable, phoneGreeting, twiml } from "./voice.js";
 import { sanitizeIntegrations, maskAgent, maskIntegrations, dispatch, deliver, ready as integrationReady, IntegrationError, TYPES as INTEGRATION_TYPES } from "./integrations.js";
-import { sanitizeSite, readiness, legalDrafts, renderSite, renderLegal, decodeImage, SiteError, PAGE_HEADERS, NICHES, COUNTRIES } from "./site.js";
+import dnsPromises from "node:dns/promises";
+import { normalizeDomain, sanitizeSite, readiness, legalDrafts, renderSite, renderLegal, decodeImage, SiteError, PAGE_HEADERS, NICHES, COUNTRIES } from "./site.js";
 import { newToken, hashToken, sanitizeSnapshot, STALE_MS } from "./jarvis.js";
 import { createGithub, summarizeProject, GithubError } from "./github.js";
 import { withDefaults, publicView } from "../public/prompt.js";
@@ -103,7 +104,7 @@ function sanitizeAgent(input, id, existing = null) {
   return a;
 }
 
-export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl = crawlSite, analyze = analyzeSite, screenshotter = null, autopilotConcurrency = 2, agency = {}, mailer = null, factories = null, env = {}, stripeFetch, githubFetch } = {}) {
+export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl = crawlSite, analyze = analyzeSite, screenshotter = null, autopilotConcurrency = 2, agency = {}, mailer = null, factories = null, env = {}, stripeFetch, githubFetch, resolveCname = (d) => dnsPromises.resolveCname(d) } = {}) {
   const store = new Store(dataDir);
   const screenshotDir = path.join(dataDir, "screenshots");
 
@@ -566,13 +567,23 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
         plan: { name: sys.planName, price: sys.planPrice },
       });
     }
-    if (p === "/api/site" && req.method === "GET") return send(res, 200, siteView(await store.get("site", ws), req, ws));
+    if (p === "/api/site" && req.method === "GET") return send(res, 200, await siteView(await store.get("site", ws), req, ws));
     if (p === "/api/site" && req.method === "PUT") {
       const body = await readJson(req, 1_500_000);
       const prev = (await store.get("site", ws)) || { id: ws };
       let next;
       try { next = sanitizeSite(body, prev); } catch (e) { if (e instanceof SiteError) throw new HttpError(400, e.message); throw e; }
       next.id = ws;
+      if (typeof body.domain === "string" && body.domain.trim() !== (prev.domain || "")) {
+        if (!body.domain.trim()) { next.domain = ""; next.domainVerified = false; }
+        else {
+          let d;
+          try { d = normalizeDomain(body.domain); } catch (e) { throw new HttpError(400, e.message); }
+          if (d === ownHost()) throw new HttpError(400, "Das ist die Adresse dieses Servers.");
+          if ((await store.list("site", (x) => x.domain === d && x.id !== ws)).length) throw new HttpError(409, "Diese Domain ist schon mit einer anderen Seite verbunden.");
+          next.domain = d; next.domainVerified = false;
+        }
+      }
       if (next.slug && (await store.list("site", (x) => x.slug === next.slug && x.id !== ws)).length) throw new HttpError(409, "Diese Adresse ist schon vergeben.");
       if (next.agentId) { const ag = await store.get("agents", next.agentId); if (!ag || !inWorkspace(ag, ws)) next.agentId = ""; }
       next.online = body.online === true ? true : body.online === false ? false : Boolean(prev.online);
@@ -581,7 +592,17 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
         if (missing.length) throw new HttpError(400, `Zum Veröffentlichen fehlt noch: ${missing.join(", ")}.`);
       }
       await store.put("site", next);
-      return send(res, 200, siteView(next, req, ws));
+      return send(res, 200, await siteView(next, req, ws));
+    }
+    if (p === "/api/site/domain/check" && req.method === "POST") {
+      const site = await store.get("site", ws);
+      if (!site?.domain) throw new HttpError(400, "Trage zuerst eine Domain ein.");
+      const target = ownHost(req);
+      let found = [];
+      try { found = (await resolveCname(site.domain)).map((x) => String(x).toLowerCase().replace(/\.$/, "")); } catch { /* no record yet */ }
+      const ok = found.includes(target);
+      if (ok !== Boolean(site.domainVerified)) await store.put("site", { ...site, domainVerified: ok });
+      return send(res, 200, { ok, target, found });
     }
     if (p === "/api/site/legal" && req.method === "GET") return send(res, 200, legalDrafts((await store.get("site", ws)) || sanitizeSite({}, { id: ws })));
     if (p === "/api/jarvis" && req.method === "GET") return send(res, 200, await jarvisView(req));
@@ -833,19 +854,33 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
     throw new HttpError(404, "Nicht gefunden.");
   }
 
-  function siteView(site, req, ws) {
+  async function siteView(site, req, ws) {
     const s = site || sanitizeSite({}, { id: ws });
     const { logo, photo, ...rest } = s;
     const img = (x) => (x ? `data:${x.mime};base64,${x.b64}` : "");
-    return { ...rest, logo: img(logo), photo: img(photo), url: s.slug ? `${baseUrl(req)}/s/${s.slug}` : "", missing: readiness(s), niches: Object.fromEntries(Object.entries(NICHES).map(([k, v]) => [k, v.label])), countries: COUNTRIES };
+    return { ...rest, logo: img(logo), photo: img(photo), url: s.slug ? `${baseUrl(req)}/s/${s.slug}` : "", missing: readiness(s), cnameTarget: ownHost(req), views: await viewStats(s.id), niches: Object.fromEntries(Object.entries(NICHES).map(([k, v]) => [k, v.label])), countries: COUNTRIES };
   }
 
-  async function siteRoute(req, res, url) {
-    if (req.method !== "GET" && req.method !== "HEAD") throw new HttpError(405, "Methode nicht erlaubt.");
-    const m = url.pathname.match(/^\/s\/([a-z0-9-]{3,40})(?:\/(impressum|datenschutz|logo|foto))?\/?$/);
-    const site = m ? (await store.list("site", (x) => x.slug === m[1] && x.online))[0] : null;
-    if (!site) throw new HttpError(404, "Diese Seite gibt es nicht.");
-    const kind = m[2];
+  const ownHost = (req) => { try { return new URL(sys.publicUrl || `http://${req.headers.host}`).hostname.toLowerCase(); } catch { return ""; } };
+  const BOT = /bot|crawl|spider|slurp|facebookexternalhit|preview|monitor|curl|wget|python-requests|headless|lighthouse/i;
+  const day = (t = Date.now()) => new Date(t).toISOString().slice(0, 10);
+  async function countView(site, req) {
+    if (req.method !== "GET" || BOT.test(req.headers["user-agent"] || "") || !req.headers["user-agent"]) return;
+    const row = (await store.get("views", site.id)) || { id: site.id, days: {} };
+    const d = day();
+    row.days[d] = (row.days[d] || 0) + 1;
+    const keep = day(Date.now() - 35 * 86400000);
+    for (const k of Object.keys(row.days)) if (k < keep) delete row.days[k];
+    await store.put("views", row);
+  }
+  async function viewStats(id) {
+    const days = ((await store.get("views", id)) || {}).days || {};
+    const series = Array.from({ length: 30 }, (_, i) => days[day(Date.now() - (29 - i) * 86400000)] || 0);
+    const sum = (a) => a.reduce((x, y) => x + y, 0);
+    return { today: series[29], d7: sum(series.slice(23)), d30: sum(series), series };
+  }
+
+  async function servePage(req, res, site, kind, base) {
     if (kind === "logo" || kind === "foto") {
       const img = kind === "logo" ? site.logo : site.photo;
       if (!img) throw new HttpError(404, "Nicht gefunden.");
@@ -853,9 +888,30 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
       return res.end(req.method === "HEAD" ? undefined : Buffer.from(img.b64, "base64"));
     }
     const agent = site.agentId ? await store.get("agents", site.agentId) : null;
-    const html = kind ? renderLegal(site, kind) : renderSite(site, { agent: agent && inWorkspace(agent, site.id) ? agent : null });
+    if (!kind) await countView(site, req);
+    const html = kind ? renderLegal(site, kind, base) : renderSite(site, { agent: agent && inWorkspace(agent, site.id) ? agent : null, base });
     res.writeHead(200, PAGE_HEADERS);
     res.end(req.method === "HEAD" ? undefined : html);
+  }
+
+  async function siteRoute(req, res, url) {
+    if (req.method !== "GET" && req.method !== "HEAD") throw new HttpError(405, "Methode nicht erlaubt.");
+    const m = url.pathname.match(/^\/s\/([a-z0-9-]{3,40})(?:\/(impressum|datenschutz|logo|foto))?\/?$/);
+    const site = m ? (await store.list("site", (x) => x.slug === m[1] && x.online))[0] : null;
+    if (!site) throw new HttpError(404, "Diese Seite gibt es nicht.");
+    return servePage(req, res, site, m[2], `/s/${site.slug}`);
+  }
+
+  // A verified customer domain (CNAME to this server) shows only the agency page, never the app.
+  async function domainRoute(req, res, url, host) {
+    const site = (await store.list("site", (x) => x.domain === host && x.domainVerified && x.online))[0];
+    if (!site) return false;
+    if (url.pathname === "/widget.js" || /^\/api\/public\/agents\/[\w-]+(\/chat)?$/.test(url.pathname)) return false;
+    if (req.method !== "GET" && req.method !== "HEAD") throw new HttpError(405, "Methode nicht erlaubt.");
+    const m = url.pathname.match(/^\/(impressum|datenschutz|logo|foto)?\/?$/);
+    if (!m) throw new HttpError(404, "Diese Seite gibt es nicht.");
+    await servePage(req, res, site, m[1], "");
+    return true;
   }
 
   async function jarvisView(req) {
@@ -883,6 +939,12 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
   }
 
   async function publicRoute(req, res, url) {
+    if (url.pathname === "/api/public/domain-ok" && req.method === "GET") {
+      // Asked by the reverse proxy before it requests a certificate: only for verified customer domains.
+      const d = String(url.searchParams.get("domain") || "").toLowerCase();
+      const hit = d && (await store.list("site", (x) => x.domain === d && x.domainVerified && x.online)).length;
+      return send(res, hit ? 200 : 404, hit ? "ok" : "");
+    }
     if (url.pathname === "/api/public/jarvis/ingest" && req.method === "POST") return jarvisIngest(req, res);
     if (url.pathname === "/api/public/plan" && req.method === "GET") return send(res, 200, await planInfo());
     if (url.pathname === "/api/public/waitlist" && req.method === "POST") {
@@ -1211,6 +1273,8 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
     const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
     await ready;
     try {
+      const host = String(req.headers.host || "").toLowerCase().split(":")[0];
+      if (host && host !== ownHost(req) && !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(host) && url.pathname !== "/api/public/domain-ok" && await domainRoute(req, res, url, host)) return;
       if (url.pathname.startsWith("/api/public/")) return await publicRoute(req, res, url);
       if (url.pathname.startsWith("/api/")) return await adminRoute(req, res, url);
       if (url.pathname.startsWith("/s/")) return await siteRoute(req, res, url);

@@ -1,4 +1,20 @@
+{
+	on_demand_tls {
+		# Certificates only for domains a customer has verified (CNAME to this server).
+		ask http://app:3000/api/public/domain-ok
+	}
+}
+
 {$DOMAIN} {
+	encode gzip
+	reverse_proxy app:3000
+}
+
+# Customer domains (CNAME -> {$DOMAIN}), certificate issued on first visit.
+https:// {
+	tls {
+		on_demand
+	}
 	encode gzip
 	reverse_proxy app:3000
 }

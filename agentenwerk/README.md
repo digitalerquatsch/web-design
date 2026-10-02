@@ -328,3 +328,9 @@ Jede Karte zeigt, womit der Agent verbunden ist (Wissen, Telefon, Verbindungen).
 ## Deine Website (Agentur-Seite)
 
 Unter **Deine Website** baust du eine öffentliche Seite für deine Agentur, erreichbar unter `/s/<adresse>`: Branche, Stil (Signature/Editorial, dunkel/hell, Farbe), Logo, Name und Kontakt, Abschnitt „Über dich“ mit Foto und optional ein Chat-Assistent zum Ausprobieren. Impressum und Datenschutzerklärung gibt es als Entwurf zum Einsetzen (DE/AT/CH); sie sind keine Rechtsberatung. Veröffentlichen geht erst, wenn Adresse, Name, E-Mail und beide Rechtstexte ohne Platzhalter vorliegen. Die Seite wird auf dem Server erzeugt, alle Eingaben werden maskiert, Bilder (PNG/JPEG/WebP, kein SVG) werden im Browser verkleinert und geprüft.
+
+### Bewertungen, eigene Domain, Aufrufe
+
+- **Bewertungen:** Namen und Zitate trägst du selbst ein (nur echte Stimmen, mit Einverständnis). Ohne Einträge fehlt der Abschnitt.
+- **Eigene Domain:** Subdomain eintragen (z. B. `www.deine-agentur.de`), beim Domain-Anbieter einen **CNAME** auf die Adresse deines Servers setzen (steht auf der Seite), „Jetzt prüfen“. Danach zeigt die Domain nur die Agentur-Seite, nie die App. Das Zertifikat holt Caddy beim ersten Aufruf automatisch (`on_demand_tls` mit Rückfrage `/api/public/domain-ok`, nur für geprüfte Domains). Voraussetzung: `PUBLIC_URL` ist gesetzt und die Seite ist online.
+- **Seitenaufrufe:** 30-Tage-Zähler pro Tag ohne Cookies und ohne IP-Adressen; Crawler und Aufrufe ohne Browser-Kennung werden nicht gezählt.

@@ -778,3 +778,10 @@ button.fnode { cursor: pointer; }
 .swatch[aria-pressed="true"] { border-color: var(--ink); box-shadow: 0 0 0 2px var(--bg) inset; }
 .swatches input[type=color] { width: 44px; height: 36px; padding: 0; border: 1px solid var(--line); border-radius: 10px; background: none; }
 .msg.ok { color: var(--ok); }
+
+.ws-review { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 14px; }
+.ws-domain { display: grid; gap: 8px; padding: 14px; border: 1px solid var(--line); border-radius: 14px; }
+.ws-domain code { padding: 2px 8px; border-radius: 8px; background: var(--sunken); }
+.ws-refine summary { cursor: pointer; font-weight: 600; }
+.ws-bars { display: flex; align-items: flex-end; gap: 3px; height: 90px; margin: 12px 0; }
+.ws-bars i { flex: 1; background: var(--accent); opacity: .8; border-radius: 3px; min-height: 3px; }
