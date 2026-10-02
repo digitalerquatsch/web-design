@@ -2,6 +2,52 @@
 
 Ein No-Code-Builder für Website-Chatbots. Du gibst deine Website-Adresse ein. Agentenwerk liest die wichtigsten Seiten und richtet daraus einen Chat-Assistenten ein, inklusive passender Fragen für deine Besucher. Den Assistenten kannst du anpassen und testen. Danach baust du ihn mit einer Zeile Code in deine Website ein.
 
+## So benutzt du es (online stellen in 6 Schritten)
+
+Agentenwerk läuft auf einem eigenen kleinen Server. Kunden, Demo-Links, Widget und Telefon brauchen eine öffentliche https-Adresse.
+
+1. **Server mieten.** Ein kleiner Linux-Server (Ubuntu 24.04) reicht, z. B. bei Hetzner, netcup oder IONOS. Standort Deutschland.
+2. **Adresse festlegen.** Bei deinem Domain-Anbieter einen DNS-Eintrag `A` für z. B. `bots.deine-agentur.de` auf die IP des Servers setzen.
+3. **Docker installieren** (per SSH auf dem Server):
+   ```bash
+   curl -fsSL https://get.docker.com | sh
+   ```
+4. **Agentenwerk holen und starten:**
+   ```bash
+   git clone https://github.com/digitalerquatsch/web-design.git
+   cd web-design/agentenwerk
+   printf "DOMAIN=bots.deine-agentur.de\nADMIN_TOKEN=%s\n" "$(openssl rand -hex 24)" > .env
+   cat .env          # ADMIN_TOKEN notieren
+   docker compose up -d --build
+   ```
+   Caddy holt das https-Zertifikat automatisch.
+5. **Im Browser einrichten:** `https://bots.deine-agentur.de` öffnen, den ersten Admin anlegen (dafür einmal den `ADMIN_TOKEN` eingeben). Dann links auf **System**:
+   - **KI:** Mistral-Schlüssel von console.mistral.ai
+   - **E-Mail-Versand:** SMTP deines Postfachs, dann „Test-E-Mail an mich“
+   - **Allgemein:** Name deiner Agentur und dein Instagram-Name
+   - **Abo & Bezahlung:** Stripe-Schlüssel und Webhook (siehe unten), Preis 30 €, 5 Plätze, Links zu AGB, Datenschutz, Impressum
+   - **Telefon-Bot:** Twilio-Zugangsdaten (optional)
+6. **Kunden reinlassen:** Unter **Nutzer** „Registrierung offen“ einschalten und die Adresse teilen. Neue Kunden registrieren sich, zahlen bei Stripe und legen sofort los. Ab dem 6. Kunden kommt die Warteliste.
+
+**Updates:** `git pull && docker compose up -d --build`. **Sicherung:** Alle Daten liegen im Docker-Volume `agentenwerk-data` (Agenten, Leads, Nutzer, Einstellungen inklusive Schlüssel). Sichere es regelmäßig, z. B. mit `docker run --rm -v agentenwerk_agentenwerk-data:/d -v $PWD:/b alpine tar czf /b/backup.tgz -C /d .`
+
+### Stripe einrichten (für das 30-€-Abo)
+
+1. Konto bei stripe.com anlegen und verifizieren.
+2. **Entwickler → API-Schlüssel:** den Secret Key (`sk_live_…`) unter System eintragen. Zum Ausprobieren zuerst den Testmodus (`sk_test_…`) nehmen.
+3. **Entwickler → Webhooks → Endpunkt hinzufügen:** die Adresse von der System-Seite (`…/api/public/stripe/webhook`), Ereignisse `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`. Den Signaturschlüssel (`whsec_…`) unter System eintragen.
+4. **Einstellungen → Kundenportal** aktivieren (Rechnungen, Zahlungsmethode, Kündigung). Den Button „Zahlungsdaten & Rechnungen“ im Konto deiner Kunden gibt es dann automatisch.
+
+Preis, Plätze und Kontingente änderst du jederzeit unter System. Neue Abos zahlen den neuen Preis.
+
+### Rechtliches beim Abo-Verkauf (bitte prüfen lassen)
+
+- **Impressum, AGB, Datenschutzerklärung** müssen auf deiner Website stehen und unter System verlinkt sein. Die Registrierung verlangt die Bestätigung von AGB und Datenschutz.
+- **Bestell-Button:** Er heißt „Zahlungspflichtig abonnieren“ (Button-Lösung, § 312j BGB).
+- **Kündigen:** Kunden kündigen im Konto mit „Abo kündigen“ zum Ende des bezahlten Monats (Kündigungsbutton, § 312k BGB). Lass prüfen, ob für dich zusätzlich ein öffentlicher Link „Verträge hier kündigen“ nötig ist.
+- **Auftragsverarbeitung:** Deine Kunden verarbeiten Daten ihrer Website-Besucher über deinen Server. Du brauchst AV-Verträge mit deinen Kunden und selbst welche mit Mistral, Stripe, deinem Mail-Anbieter, Twilio und dem Server-Hoster.
+- Das ist keine Rechtsberatung.
+
 ## Was es kann
 
 - **Website einlesen:** Startseite plus bis zu 7 Unterseiten (Kontakt, Impressum, Leistungen, Preise, FAQ, Über uns). Daraus entstehen Firmenwissen, Öffnungszeiten, Leistungen, 6–10 FAQ mit Antworten, Einstiegsfragen als Buttons, Begrüßung, Markenfarbe und Link zur Datenschutzerklärung. Was auf der Website fehlt, wird als Hinweis angezeigt.
@@ -10,6 +56,10 @@ Ein No-Code-Builder für Website-Chatbots. Du gibst deine Website-Adresse ein. A
 - **Aktionen im Gespräch:** Der Agent speichert Leads (`save_lead`) und Terminanfragen (`book_appointment`). Beides erscheint im Builder unter „Erfasst“, zusammen mit den Gesprächsverläufen.
 - **Autopilot:** Tabelle hochladen (Excel oder CSV, bis 200 Websites). Für jede Zeile entsteht automatisch ein fertiger Agent und eine **Demo-Seite**, auf der der Chat über einem Screenshot der echten Website liegt. Die Ergebnisliste mit Demo-Links und Einbau-Code gibt es als Tabelle zum Download, etwa für Akquise-Mails.
 - **Akquise-Dashboard:** Jede fertige Website aus dem Autopiloten wird ein Lead. Mistral schreibt pro Lead eine kurze, persönliche E-Mail mit Demo-Link. Du prüfst sie und sendest mit einem Klick. Das Dashboard zeigt, wer die Demo geöffnet oder darin gechattet hat, wann Nachfassen fällig ist und wie die Pipeline steht.
+- **Abo:** Selbst-Registrierung mit monatlicher Zahlung über Stripe (Standard: 30 €/Monat, 5 Plätze, danach Warteliste). Jeder Abo-Kunde arbeitet in seinem eigenen Bereich mit eigenen Agenten, Listen, Leads und Absenderdaten, mit Monatskontingent für Website-Analysen und Chat-Nachrichten.
+- **1:1 Mentoring:** Autopilot und Akquise sind für Abo-Kunden gesperrt. Ein Button führt zu deinem Instagram, und du schaltest sie unter Nutzer frei.
+- **Telefon-Bot:** Derselbe Agent nimmt Anrufe an (über eine Twilio-Nummer), beantwortet Fragen mit Stimme und nimmt Rückrufwünsche und Termine auf.
+- **Alles im Browser einstellen:** KI-Schlüssel, E-Mail-Versand, Bezahlung, Telefon, Instagram und Kontingente unter **System**, ohne `.env` und ohne Neustart.
 - **Nutzerverwaltung:** Konten mit E-Mail und Passwort. Neue Leute beantragen einen Zugang, ein Admin schaltet sie frei. Rollen: Admin, Team, Kunde. Kunden sehen nur die Agenten, die du ihnen zuweist.
 - **KI aus der EU:** Standard ist Mistral AI (Sitz Paris). Claude von Anthropic ist als Alternative einstellbar.
 - **Widget zum Einbinden:** ein Script-Tag, Darstellung im Shadow DOM (die CSS deiner Seite stört nicht), mobil im Vollbild. Logo und Farbe des Betriebs, eigener Chat-Titel, hell oder dunkel, Begrüßungsbildschirm mit den Einstiegsfragen als Liste und der Hinweis „Sie schreiben mit einem KI-Assistenten“ (Transparenzpflicht nach EU AI Act). Optional nur für freigegebene Domains.
@@ -24,6 +74,15 @@ Links steht eine Navigation, auf dem Handy über den Menü-Button oben links:
 - **Autopilot**, **Akquise**, **Nutzer:** wie oben beschrieben.
 
 Kunden sehen nur Start, Agenten und Editor.
+
+## Telefon-Bot
+
+1. Unter **System → Telefon-Bot** Twilio Account SID und Auth Token eintragen (twilio.com → Console).
+2. Bei Twilio eine deutsche Nummer kaufen (Twilio verlangt dafür einen Adressnachweis).
+3. Im Editor des Agenten unter **Telefon** „Anrufe beantworten“ einschalten und die angezeigte Adresse kopieren.
+4. Bei Twilio: Phone Numbers → Nummer → Voice Configuration → „A call comes in“ → Webhook, HTTP POST, Adresse einfügen.
+
+Der Agent begrüßt mit dem Hinweis „Sie sprechen mit dem KI-Assistenten von …“ (Transparenzpflicht EU AI Act). Er antwortet kurz und ohne Links. Rückrufwünsche und Termine landen unter „Erfasst“, mit der Nummer des Anrufers. Jede Anfrage von Twilio wird über die Signatur geprüft. Spracherkennung und Stimme laufen bei Twilio (USA, mit EU-Option). Nimm das in deine Datenschutzerklärung auf.
 
 ## Design
 
@@ -55,8 +114,9 @@ Im Builder oben auf **Nutzer** (nur für Admins). Eine Zahl am Tab zeigt offene 
 
 | Rolle | Darf |
 |---|---|
-| Admin | alles, auch Nutzerverwaltung |
-| Team | Builder, Autopilot, Akquise |
+| Admin | alles, auch Nutzer und System |
+| Team | Builder, Autopilot, Akquise im Hauptbereich (deine Agentur) |
+| Abo | eigener, abgetrennter Bereich. Autopilot und Akquise erst nach Freischaltung im Mentoring. Monatskontingent |
 | Kunde | nur die zugewiesenen Agenten im Builder bearbeiten und testen, keine Website-Analyse, kein Löschen |
 
 Es bleibt immer mindestens ein aktiver Admin übrig, das prüft der Server. Jeder kann sein Passwort über das Menü oben rechts ändern.
@@ -170,6 +230,9 @@ src/autopilot.js     Warteschlange: Tabelle → Agenten + Demos, setzt nach Neus
 src/table.js         CSV- und XLSX-Leser (ohne Zusatzbibliothek), Spalten-Erkennung, CSV-Export
 src/screenshot.js    Website-Screenshots mit Playwright (optional)
 src/users.js         Konten, Passwörter (scrypt), Sitzungen, Rollen und Rechte
+src/system.js        Einstellungen aus dem Browser (System-Seite), Schlüssel nur maskiert
+src/billing.js       Stripe: Checkout, Kundenportal, Kündigung, signierte Webhooks
+src/voice.js         Telefon über Twilio: TwiML, Signaturprüfung, Text fürs Vorlesen
 src/store.js         JSON-Dateien mit atomaren Schreibvorgängen
 src/security.js      Admin-Prüfung, Rate-Limit, erlaubte Domains
 public/prompt.js     Vorlagen und Prompt-Generator (Browser und Server)
@@ -180,7 +243,9 @@ public/agents.js     Agenten-Übersicht (Cards)
 public/icons.js      Linien-Icons
 public/autopilot.js  Autopilot-Oberfläche
 public/acquisition.js Akquise-Dashboard
-public/users.js      Nutzerverwaltung (Cards)
+public/users.js      Nutzerverwaltung (Cards), Abo-Status, Autopilot-Freischaltung, Warteliste
+public/system.js     System-Seite
+public/account.js    Konto (Abo, Verbrauch, Passwort) und 1:1 Mentoring
 public/auth.js       Anmelden, Zugang beantragen, ersten Admin anlegen
 public/unsubscribe.html Abmeldeseite (/abmelden/TOKEN)
 public/preview.html  Demo-Seite für Kunden (/d/AGENT_ID)

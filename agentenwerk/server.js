@@ -9,31 +9,32 @@ const { createApp } = await import("./src/app.js");
 const { createAi } = await import("./src/ai.js");
 const { createScreenshotter } = await import("./src/screenshot.js");
 const { createMailer } = await import("./src/outreach.js");
+const { envFrom } = await import("./src/system.js");
 
 const port = Number(process.env.PORT || 3000);
 const host = process.env.HOST || "127.0.0.1";
 const adminToken = process.env.ADMIN_TOKEN || "";
 const ai = createAi();
 
-if (!ai.configured) console.warn(`Hinweis: ${ai.keyName} fehlt. Builder und Widget laufen, aber Analyse und Chat antworten erst mit Schlüssel.`);
-if (host !== "127.0.0.1" && host !== "localhost" && !adminToken) console.warn("Warnung: Der Server lauscht nicht nur lokal, aber ADMIN_TOKEN ist nicht gesetzt. Der Builder ist dann nur über http://localhost erreichbar.");
+if (host !== "127.0.0.1" && host !== "localhost" && !adminToken) console.warn("Hinweis: Der Server lauscht im Netz. Lege den ersten Admin über localhost an (oder setze ADMIN_TOKEN), sonst kann niemand von außen den ersten Zugang erstellen.");
 
 const screenshotter = await createScreenshotter();
 if (!screenshotter) console.warn("Hinweis: playwright ist nicht installiert. Demos zeigen eine nachgebaute Seite statt eines Screenshots (npm install playwright && npx playwright install chromium).");
 
 const mailer = await createMailer();
-if (!mailer) console.warn("Hinweis: Kein SMTP eingerichtet. Im Akquise-Dashboard lassen sich Entwürfe erstellen und kopieren, aber nicht versenden.");
 
+// Settings saved on the "System" page rebuild AI and mail without a restart.
 const handler = createApp({
   dataDir: path.resolve(here, process.env.DATA_DIR || "data"),
   ai,
-  adminToken,
-  publicUrl: (process.env.PUBLIC_URL || "").replace(/\/$/, ""),
-  screenshotter,
   mailer,
-  agency: { name: process.env.AGENCY_NAME || "", contact: process.env.AGENCY_CONTACT || "" },
+  adminToken,
+  screenshotter,
+  env: process.env,
+  factories: { ai: (sys) => createAi(envFrom(sys)), mailer: (sys) => createMailer(envFrom(sys)) },
 });
 
 http.createServer(handler).listen(port, host, () => {
-  console.log(`Agentenwerk läuft auf http://${host === "0.0.0.0" ? "localhost" : host}:${port}  (KI: ${ai.provider} · ${ai.model})`);
+  console.log(`Agentenwerk läuft auf http://${host === "0.0.0.0" ? "localhost" : host}:${port}`);
+  console.log("Schlüssel, E-Mail, Abo und Telefon stellst du als Admin im Browser unter „System“ ein.");
 });

@@ -6,7 +6,7 @@
 import crypto from "node:crypto";
 import { newId } from "./store.js";
 
-export const ROLES = { admin: "Admin", team: "Team", kunde: "Kunde" };
+export const ROLES = { admin: "Admin", team: "Team", abo: "Abo", kunde: "Kunde" };
 export const STATUSES = { pending: "Wartet auf Freischaltung", active: "Aktiv", blocked: "Gesperrt" };
 export const COOKIE = "aw_session";
 const SESSION_DAYS = 14;
@@ -82,7 +82,7 @@ export function createAuth({ store }) {
       return (await users()).find((u) => u.email === e) || null;
     },
 
-    async create({ name, email, password, company = "", role = "team", status = "pending", note = "" }) {
+    async create({ name, email, password, company = "", role = "team", status = "pending", note = "", extra = {} }) {
       const e = normEmail(email);
       if (!validEmail(e)) throw new AuthError(400, "Bitte eine gültige E-Mail-Adresse angeben.");
       if (!String(name || "").trim()) throw new AuthError(400, "Bitte einen Namen angeben.");
@@ -102,6 +102,8 @@ export function createAuth({ store }) {
         createdAt: Date.now(),
         approvedAt: status === "active" ? Date.now() : null,
         lastLoginAt: null,
+        autopilotUnlocked: false,
+        ...extra,
       };
       await store.put("users", user);
       return user;
@@ -153,13 +155,26 @@ export function createAuth({ store }) {
 
 /* ---------- permissions ---------- */
 
-// What each role may do in the admin API. Kunde only sees agents assigned to them.
+// Abo users each get their own workspace; admin and team share "main".
+export const workspaceOf = (user) => (user?.role === "abo" ? user.id : "main");
+export const inWorkspace = (rec, ws) => (rec?.ownerId || "main") === ws;
+
+export function canSeeAgent(user, agent) {
+  if (!agent) return false;
+  if (user.role === "kunde") return (user.agentIds || []).includes(agent.id);
+  return inWorkspace(agent, workspaceOf(user));
+}
+
+// Abo users unlock the autopilot (and acquisition) through the mentoring.
+export const autopilotAllowed = (user) => user.role !== "abo" || user.autopilotUnlocked === true;
+
+// What each role may do in the admin API.
 export function allowed(user, method, path) {
   if (user.role === "admin") return true;
-  if (/^\/api\/(users|auth\/config)/.test(path)) return false;
-  if (user.role === "team") return true;
+  if (/^\/api\/(users|auth\/config|system)/.test(path)) return false;
+  if (user.role === "team" || user.role === "abo") return true;
   // kunde
-  if (path === "/api/status" || path === "/api/overview" || path === "/api/auth/password") return true;
+  if (path === "/api/status" || path === "/api/overview" || path === "/api/auth/password" || path === "/api/account") return true;
   if (path === "/api/agents") return method === "GET";
   if (path === "/api/test-chat") return method === "POST";
   const m = path.match(/^\/api\/agents\/[\w-]+(\/[a-z-]+)?$/);

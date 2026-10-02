@@ -1,0 +1,30 @@
+# Agentenwerk mit automatischem HTTPS (Caddy holt das Zertifikat selbst).
+# Vorher in .env setzen: DOMAIN=bots.deine-agentur.de und ADMIN_TOKEN=<langes Zufallspasswort>
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      PUBLIC_URL: https://${DOMAIN}
+      ADMIN_TOKEN: ${ADMIN_TOKEN}
+    volumes:
+      - agentenwerk-data:/data
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on: [app]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  agentenwerk-data:
+  caddy-data:
+  caddy-config:

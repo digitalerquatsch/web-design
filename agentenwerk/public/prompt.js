@@ -25,6 +25,7 @@ export const BASE = {
   dos: "", donts: "", privacy: true, privacyUrl: "",
   color: "#3a46c9", position: "right", welcome: "Hallo! Wie kann ich Ihnen helfen?", quickReplies: [], initials: "",
   logoUrl: "", widgetTitle: "", widgetTheme: "light",
+  phoneEnabled: false, phoneGreeting: "",
   promptOverride: null,
   allowedOrigins: [],
   source: null, // { url, importedAt, pages: [{url, title}], missing: [] } after a website import
@@ -107,8 +108,9 @@ export function fromTemplate(key) {
 export function withDefaults(cfg) {
   const out = { ...clone(BASE), ...(cfg || {}) };
   for (const k of ["tone", "faqs", "leadFields", "quickReplies", "allowedOrigins"]) if (!Array.isArray(out[k])) out[k] = clone(BASE[k]);
-  for (const k of ["name", "company", "industry", "website", "role", "knowledge", "hours", "services", "bookingRules", "handoff", "dos", "donts", "privacyUrl", "welcome", "initials", "logoUrl", "widgetTitle"]) if (typeof out[k] !== "string") out[k] = "";
+  for (const k of ["name", "company", "industry", "website", "role", "knowledge", "hours", "services", "bookingRules", "handoff", "dos", "donts", "privacyUrl", "welcome", "initials", "logoUrl", "widgetTitle", "phoneGreeting"]) if (typeof out[k] !== "string") out[k] = "";
   if (out.widgetTheme !== "dark") out.widgetTheme = "light";
+  out.phoneEnabled = out.phoneEnabled === true;
   if (!GOALS[out.goal]) out.goal = "support";
   out.faqs = out.faqs.filter((f) => f && typeof f.q === "string" && typeof f.a === "string");
   out.leadFields = out.leadFields.filter((f) => LEAD_FIELDS[f]);

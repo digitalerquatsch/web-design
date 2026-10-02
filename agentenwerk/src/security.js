@@ -24,7 +24,13 @@ export function bearer(req) {
   return auth.startsWith("Bearer ") ? auth.slice(7) : "";
 }
 
+// Behind a reverse proxy (Caddy in docker-compose) every request comes from
+// the proxy; with TRUST_PROXY=1 the client address comes from X-Forwarded-For.
 export function clientIp(req) {
+  if (process.env.TRUST_PROXY === "1") {
+    const xff = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+    if (xff) return xff;
+  }
   return req.socket.remoteAddress || "unknown";
 }
 

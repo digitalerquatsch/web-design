@@ -52,6 +52,40 @@ export async function renderAuth({ root, h, message = "", onSuccess, onToken }) 
         await post("/api/auth/setup", { name: val("su_name"), email: val("su_email"), password: val("su_pw") }, state.setupNeedsToken ? { authorization: "Bearer " + val("su_token") } : {});
         onSuccess();
       });
+    } else if (mode === "register" && state.plan?.enabled && state.plan.seatsLeft <= 0) {
+      card = form("Alle Plätze sind vergeben", `${state.plan.name} startet mit ${state.plan.seats} Kunden, und die sind gerade voll. Trag dich ein, dann melden wir uns, sobald ein Platz frei wird.`, [
+        field("wl_name", "Name", "text", { autocomplete: "name" }),
+        field("wl_email", "E-Mail", "email", { autocomplete: "email" }),
+      ], "Auf die Warteliste", async () => {
+        const r = await fetch("/api/public/waitlist", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: val("wl_name"), email: val("wl_email") }) });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.error || "Das hat nicht geklappt.");
+        mode = "login"; info = j.message; render();
+      }, [link("Ich habe schon einen Zugang", "login")]);
+    } else if (mode === "register" && state.plan?.enabled) {
+      const p = state.plan;
+      const terms = h("input", { type: "checkbox", id: "rg_terms", required: true });
+      const termsLabel = h("label", { class: "check", for: "rg_terms" }, terms, h("span", null, "Ich akzeptiere die ",
+        p.termsUrl ? h("a", { href: p.termsUrl, target: "_blank", rel: "noopener", text: "AGB" }) : "AGB", " und habe die ",
+        p.privacyUrl ? h("a", { href: p.privacyUrl, target: "_blank", rel: "noopener", text: "Datenschutzerklärung" }) : "Datenschutzerklärung", " gelesen."));
+      card = form("Abo abschließen", null, [
+        h("div", { class: "plan-box" },
+          h("div", { class: "plan-box-top" }, h("strong", { text: p.name }), h("span", { class: "pill st-entwurf", text: `noch ${p.seatsLeft} von ${p.seats} Plätzen` })),
+          h("p", { class: "plan-price" }, h("b", { text: `${p.price} €` }), " pro Monat, monatlich kündbar"),
+          h("ul", { class: "auth-points" },
+            h("li", { text: "Agenten aus jeder Website in einer Minute" }),
+            h("li", { text: `${p.limits.analyses} Website-Analysen und ${p.limits.chats.toLocaleString("de-DE")} Chat-Nachrichten im Monat` }),
+            h("li", { text: "Demo-Seiten, Widget zum Einbinden, Telefon-Bot" }))),
+        field("rg_name", "Name", "text", { autocomplete: "name" }),
+        field("rg_email", "E-Mail", "email", { autocomplete: "email" }),
+        h("div", { class: "field" }, h("label", { for: "rg_company", text: "Firma (optional)" }), h("input", { class: "input", id: "rg_company", autocomplete: "organization" })),
+        field("rg_pw", "Passwort (mindestens 10 Zeichen)", "password", { autocomplete: "new-password", minlength: "10" }),
+        termsLabel,
+        h("p", { class: "hint", text: "Weiter geht es zur sicheren Bezahlung bei Stripe. Danach steht dir alles sofort zur Verfügung." }),
+      ], "Zahlungspflichtig abonnieren", async () => {
+        const r = await post("/api/auth/register", { name: val("rg_name"), email: val("rg_email"), company: val("rg_company"), password: val("rg_pw"), acceptTerms: document.getElementById("rg_terms").checked });
+        if (r.checkoutUrl) location.href = r.checkoutUrl;
+      }, [link("Ich habe schon einen Zugang", "login")]);
     } else if (mode === "register") {
       card = form("Zugang beantragen", "Ein Admin prüft deine Anfrage und schaltet dich frei.", [
         field("rg_name", "Name", "text", { autocomplete: "name" }),
@@ -74,7 +108,7 @@ export async function renderAuth({ root, h, message = "", onSuccess, onToken }) 
       ], "Anmelden", async () => {
         await post("/api/auth/login", { email: val("li_email"), password: val("li_pw") });
         onSuccess();
-      }, [state.signupOpen ? link("Zugang beantragen", "register") : null, state.tokenLogin ? link("Mit Admin-Token", "token") : null].filter(Boolean));
+      }, [state.signupOpen ? link(state.plan?.enabled ? `Jetzt registrieren · ${state.plan.price} € / Monat` : "Zugang beantragen", "register") : null, state.tokenLogin ? link("Mit Admin-Token", "token") : null].filter(Boolean));
     }
     root.replaceChildren(h("div", { class: "auth" },
       h("div", { class: "auth-hero" },

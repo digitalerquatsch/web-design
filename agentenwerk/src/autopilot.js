@@ -30,7 +30,7 @@ export function summarize(batch) {
   };
 }
 
-export function createAutopilot({ store, crawl, analyze, ai, screenshotter = null, screenshotDir, concurrency = 2 }) {
+export function createAutopilot({ store, crawl, analyze, getAi, screenshotter = null, screenshotDir, concurrency = 2, consume = async () => {} }) {
   let active = 0;
   let stopped = false;
   const listeners = new Set();
@@ -57,8 +57,11 @@ export function createAutopilot({ store, crawl, analyze, ai, screenshotter = nul
   }
 
   async function processRow(batchId, row) {
+    const ai = getAi();
+    const ownerId = (await store.get("batches", batchId))?.ownerId || "main";
     try {
       if (!ai.configured) throw new CrawlError(`${ai.keyName || "Der KI-Schlüssel"} fehlt in der .env.`);
+      try { await consume(ownerId, "analyses"); } catch (e) { throw new CrawlError(e.message); }
       await saveRow(batchId, row.id, { status: "crawling", error: "" });
       const site = await crawl(row.url, {});
       if (!site.pages.some((p) => p.text.length > 200)) throw new CrawlError("Kaum Text auf der Website (wird sie per JavaScript aufgebaut?).");
@@ -72,6 +75,7 @@ export function createAutopilot({ store, crawl, analyze, ai, screenshotter = nul
         ...withDefaults({ ...fields, template: "website", source: result.source }),
         id: existing?.id || newId(),
         batchId,
+        ownerId,
         prospect: { contact: row.contact, email: row.email, phone: row.phone, city: row.city },
         createdAt: existing?.createdAt || Date.now(),
         updatedAt: Date.now(),
@@ -95,7 +99,7 @@ export function createAutopilot({ store, crawl, analyze, ai, screenshotter = nul
       // Every finished row is a lead in the acquisition dashboard.
       const known = (await store.list("leads", (l) => l.agentId === agent.id))[0];
       if (known) Object.assign(known, { company: row.company || agent.company, url: row.url, updatedAt: Date.now() });
-      await store.put("leads", known || newLead({ ...row, company: row.company || agent.company }, agent, batchId));
+      await store.put("leads", known || { ...newLead({ ...row, company: row.company || agent.company }, agent, batchId), ownerId });
       await saveRow(batchId, row.id, { status: "done", screenshot, claimed: false });
     } catch (err) {
       const message = err instanceof CrawlError ? err.message : (err?.code === "refusal" ? err.message : "Unerwarteter Fehler bei der Verarbeitung.");
@@ -123,9 +127,10 @@ export function createAutopilot({ store, crawl, analyze, ai, screenshotter = nul
       pump();
     },
 
-    async createBatch({ name, rows, skipped = [] }) {
+    async createBatch({ name, rows, skipped = [], ownerId = "main" }) {
       const batch = {
         id: newId(),
+        ownerId,
         name: name || `Autopilot ${new Date().toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "Europe/Berlin" })}`,
         createdAt: Date.now(),
         skipped,

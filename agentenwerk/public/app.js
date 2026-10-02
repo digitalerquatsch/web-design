@@ -9,6 +9,8 @@ import { mountHome } from "./home.js";
 import { mountAgents } from "./agents.js";
 import { icon } from "./icons.js";
 import { mountReview } from "./review.js";
+import { mountSystem } from "./system.js";
+import { mountAccount, mountMentoring } from "./account.js";
 import { TEMPLATES, TONES, GOALS, LEAD_FIELDS, COLORS, fromTemplate, withDefaults, buildPrompt, activePrompt } from "./prompt.js";
 
 /* ---------- helpers ---------- */
@@ -42,6 +44,7 @@ function headers() {
 async function failure(res) {
   const j = await res.json().catch(() => ({}));
   if (res.status === 401) { showGate(j.error); throw new AuthError(j.error); }
+  if (res.status === 402 && typeof showView === "function") { setTimeout(() => showView("account"), 0); throw new Error(j.error || "Dein Abo ist nicht aktiv."); }
   if (res.status === 403 && /localhost|X-Agentenwerk/.test(j.error || "")) { showGate(j.error); throw new AuthError(j.error); }
   throw new Error(j.error || `Fehler ${res.status}`);
 }
@@ -273,6 +276,7 @@ const SECTIONS = [
   { id: "ziele", title: "Ziel & Aktionen", lead: "Was soll am Ende einer Unterhaltung herauskommen?", done: () => !!cfg.goal && cfg.leadFields.length > 0 },
   { id: "regeln", title: "Regeln", lead: "Leitplanken: was der Agent immer tun soll und was nie.", done: () => !!(cfg.dos.trim() || cfg.donts.trim()) },
   { id: "design", title: "Widget", lead: "So erscheint der Chat auf deiner Website. Die Vorschau rechts zeigt es live.", done: () => !!cfg.welcome.trim() },
+  { id: "phone", title: "Telefon", lead: "Derselbe Agent nimmt auch Anrufe an: Er versteht, was der Anrufer sagt, und antwortet mit Stimme.", done: () => cfg.phoneEnabled },
   { id: "prompt", title: "System-Prompt", lead: "Aus deinen Angaben entsteht dieser Prompt. Du kannst ihn auch von Hand anpassen.", done: () => true },
   { id: "embed", title: "Einbinden", lead: "Bau den Agenten mit einer Zeile Code in deine Website ein.", done: () => !!cfg.id },
 ];
@@ -518,6 +522,28 @@ const BUILDERS = {
     renderQr();
     f.append(field("Schnellantworten", "Bis zu 5 Buttons unter der Begrüßung.", list));
   },
+  phone(f) {
+    if (!status.phone?.enabled) f.append(h("div", { class: "note" }, h("strong", { text: "Noch nicht eingerichtet. " }),
+      me().role === "admin" ? h("span", null, "Trage Twilio unter ", h("button", { type: "button", class: "linkish", text: "System", onclick: () => showView("system") }), " ein.") : "Der Telefon-Bot ist auf diesem Server noch nicht freigeschaltet."));
+    f.append(toggle("phoneEnabled", "Anrufe mit diesem Agenten beantworten", true));
+    const g = textField("phoneGreeting", cfg.welcome || "Guten Tag, wie kann ich Ihnen helfen?", 3);
+    const said = h("p", { class: "hint" });
+    const upd = () => {
+      const base = (cfg.phoneGreeting || cfg.welcome || "Wie kann ich Ihnen helfen?").trim();
+      said.textContent = "Am Telefon hört man: „" + (/\b(KI|künstliche|digitale[rn]?|virtuelle[rn]?)\b/i.test(base) ? base : `Sie sprechen mit dem KI-Assistenten von ${cfg.company || "uns"}. ${base}`) + "“";
+    };
+    g.addEventListener("input", upd); upd();
+    f.append(field("Begrüßung am Telefon", "Leer lassen nimmt die Begrüßung aus dem Widget. Der Hinweis auf den KI-Assistenten kommt automatisch davor (Pflicht nach EU AI Act).", h("div", { class: "fields", style: "gap:6px" }, g, said), "phoneGreeting"));
+    if (!cfg.id) { f.append(h("div", { class: "note", text: "Speichere den Agenten zuerst, dann erscheint hier die Adresse für Twilio." })); return; }
+    const url = `${status.publicUrl.replace(/\/$/, "")}/api/public/voice/${cfg.id}`;
+    f.append(field("Adresse für Twilio", null, h("div", { class: "fields", style: "gap:8px" }, h("pre", { class: "code", text: url }), h("div", { class: "toolbar" }, copyBtn("Adresse kopieren", () => url)))));
+    f.append(h("ol", { class: "steps-list" },
+      h("li", { text: "Bei Twilio (twilio.com) anmelden und eine deutsche Telefonnummer kaufen. Für deutsche Nummern verlangt Twilio einen Adressnachweis." }),
+      h("li", { text: "Phone Numbers → deine Nummer → Voice Configuration → „A call comes in“: Webhook, HTTP POST, die Adresse oben einfügen, speichern." }),
+      h("li", { text: "Die Nummer anrufen. Termine und Rückrufwünsche landen wie im Chat unter „Erfasst“, mit der Nummer des Anrufers." }),
+      h("li", { text: "Auf deiner Website oder im Google-Profil kannst du die Nummer als „KI-Telefon“ angeben oder Anrufe außerhalb der Öffnungszeiten dorthin umleiten." })));
+    if (/localhost|127\.0\.0\.1/.test(url)) f.append(h("div", { class: "note", text: "Der Server läuft lokal. Twilio braucht eine öffentliche https-Adresse (unter System → Öffentliche Adresse)." }));
+  },
   prompt(f) {
     const manual = cfg.promptOverride != null;
     const meta = h("span", { class: "meta", id: "promptMeta", text: promptMeta() });
@@ -691,7 +717,7 @@ function renderCaptured() {
     for (const c of conversations.slice(0, 30)) {
       const first = c.messages.find((m) => m.role === "user");
       const det = h("details", { class: "conv" },
-        h("summary", null, h("span", { class: "meta", text: fmt(c.lastAt || c.startedAt) + (c.test ? " · Test" : "") + ` · ${c.messages.length} Nachrichten` }), h("p", { text: first ? first.text.slice(0, 120) : "" })));
+        h("summary", null, h("span", { class: "meta", text: fmt(c.lastAt || c.startedAt) + (c.test ? " · Test" : "") + (c.channel === "telefon" ? ` · Telefon${c.from ? " " + c.from : ""}` : "") + ` · ${c.messages.length} Nachrichten` }), h("p", { text: first ? first.text.slice(0, 120) : "" })));
       for (const m of c.messages) det.append(h("p", null, h("span", { class: "who", text: m.role === "user" ? "Besucher: " : (cfg.name || "Agent") + ": " }), m.text));
       v.append(det);
     }
@@ -737,29 +763,41 @@ const usersView = mountUsers({ root: $("usersView"), api, h, getStatus: () => st
 const homeView = mountHome({ root: $("homeView"), api, h, icon, getStatus: () => status, go: (v) => showView(v), onNew: newAgent, onEdit: openAgentById });
 const agentsView = mountAgents({ root: $("agentsView"), api, h, icon, getStatus: () => status, onNew: newAgent, onEdit: openAgentById });
 
+const systemView = mountSystem({ root: $("systemView"), api, h, icon, onSaved: refreshStatus });
+const accountView = mountAccount({ root: $("accountView"), api, h, icon, getStatus: () => status });
+const mentoringView = mountMentoring({ root: $("mentoringView"), h, icon, getStatus: () => status });
+
 // Navigation: one entry per page, filtered by role.
 const PAGES = [
   { id: "home", label: "Start", icon: "home", el: "homeView", ctl: homeView },
   { id: "agents", label: "Agenten", icon: "bot", el: "agentsView", ctl: agentsView },
   { id: "builder", label: "Editor", icon: "edit", el: "bench" },
-  { id: "autopilot", label: "Autopilot", icon: "upload", el: "autopilotView", ctl: autopilotView, staff: true },
-  { id: "acquisition", label: "Akquise", icon: "send", el: "acquisitionView", ctl: acquisitionView, staff: true, glow: true },
+  { id: "autopilot", label: "Autopilot", icon: "upload", el: "autopilotView", ctl: autopilotView, staff: true, locked: true },
+  { id: "acquisition", label: "Akquise", icon: "send", el: "acquisitionView", ctl: acquisitionView, staff: true, glow: true, locked: true },
+  { id: "mentoring", label: "1:1 Mentoring", icon: "spark", el: "mentoringView", ctl: mentoringView, abo: true, glow: true },
   { id: "users", label: "Nutzer", icon: "users", el: "usersView", ctl: usersView, admin: true },
-  { id: "review", label: "Durchgehen", icon: "send", el: "reviewView", ctl: reviewView, staff: true, hiddenInNav: true },
+  { id: "system", label: "System", icon: "settings", el: "systemView", ctl: systemView, admin: true },
+  { id: "account", label: "Konto", icon: "card", el: "accountView", ctl: accountView },
+  { id: "review", label: "Durchgehen", icon: "send", el: "reviewView", ctl: reviewView, staff: true, hiddenInNav: true, locked: true },
 ];
+const billingBlocked = () => Boolean(status.billing) && !["active", "trialing", "past_due"].includes(status.billing.status);
+const isLocked = (p) => p.locked && me().role === "abo" && !me().autopilotAllowed;
 let currentView = "home";
 const viewAllowed = (v) => {
   const p = PAGES.find((x) => x.id === v);
   if (!p) return false;
+  if (billingBlocked()) return v === "account";
   if (p.admin) return me().role === "admin";
+  if (p.abo) return me().role === "abo";
   if (p.staff) return !isKunde();
   return true;
 };
 function renderNav() {
   const list = $("navList");
   list.replaceChildren(...PAGES.filter((p) => viewAllowed(p.id) && !p.hiddenInNav).map((p) => {
-    const b = h("button", { type: "button", class: "nav-item" + (p.glow ? " glow" : ""), "aria-current": p.id === currentView || (p.id === reviewReturn && currentView === "review") ? "page" : null, onclick: () => { showView(p.id); closeNav(); } },
+    const b = h("button", { type: "button", class: "nav-item" + (p.glow ? " glow" : "") + (isLocked(p) ? " locked" : ""), "aria-current": p.id === currentView || (p.id === reviewReturn && currentView === "review") ? "page" : null, onclick: () => { showView(p.id); closeNav(); } },
       icon(p.icon, 20), h("span", { text: p.label }));
+    if (p.locked && me().role === "abo") b.append(h("span", { class: "nav-lock", title: isLocked(p) ? "Wird im Mentoring freigeschaltet" : "Freigeschaltet" }, icon(isLocked(p) ? "lock" : "unlock", 16)));
     if (p.id === "users" && status.pendingUsers) b.append(h("span", { class: "count", text: String(status.pendingUsers) }));
     return b;
   }));
@@ -779,9 +817,22 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape" && $("siden
 async function refreshStatus() {
   try { status = await api("GET", "/api/status"); } catch { return; }
   renderNav();
+  renderUsage();
+}
+// Like a credit counter: what is left of this month's plan.
+function renderUsage() {
+  const chip = $("usageChip");
+  const u = status.usage;
+  if (!u?.limits) { chip.hidden = true; return; }
+  chip.hidden = false;
+  chip.replaceChildren(icon("spark", 16), h("span", { text: `${Math.max(0, u.limits.chats - u.chats).toLocaleString("de-DE")}` }), h("span", { class: "meta", text: "Nachrichten frei" }));
+  chip.title = `Diesen Monat: ${u.analyses}/${u.limits.analyses} Analysen, ${u.chats}/${u.limits.chats} Chat-Nachrichten`;
+  chip.onclick = () => showView("account");
 }
 function showView(v) {
-  if (!viewAllowed(v)) v = "home";
+  const target = PAGES.find((p) => p.id === v);
+  if (target && isLocked(target)) v = "mentoring";
+  if (!viewAllowed(v)) v = billingBlocked() ? "account" : "home";
   const prev = PAGES.find((p) => p.id === currentView);
   if (prev?.ctl && prev.id !== v) prev.ctl.hide();
   currentView = v;
@@ -803,7 +854,7 @@ function renderAll() { renderRail(); renderForm(); applyWidgetLook(); renderAgen
 async function boot() {
   try {
     status = await api("GET", "/api/status");
-    agents = await api("GET", "/api/agents");
+    agents = billingBlocked() ? [] : await api("GET", "/api/agents");
   } catch (e) {
     if (!(e instanceof AuthError)) showGate("Fehler beim Laden: " + e.message);
     return;
@@ -811,15 +862,27 @@ async function boot() {
   $("gate").hidden = true;
   $("appRoot").hidden = false;
   renderMe();
-  refreshStatus();
+  renderUsage();
+  renderNav();
+  const params = new URLSearchParams(location.search);
+  const checkout = params.get("checkout");
+  const wantAccount = params.get("view") === "account";
+  if (checkout || params.get("view")) history.replaceState(null, "", "/");
+  if (checkout === "success" && billingBlocked()) {
+    // Stripe's webhook may arrive a moment after the redirect back.
+    for (let i = 0; i < 10 && billingBlocked(); i++) { await new Promise((r) => setTimeout(r, 1500)); await refreshStatus(); }
+    if (!billingBlocked()) agents = await api("GET", "/api/agents").catch(() => []);
+  }
   const banner = $("banner");
   const notes = [];
-  if (!status.aiConfigured) notes.push(h("p", { text: `${status.keyName} fehlt in der .env des Servers. Konfigurieren geht, aber Website-Analyse und Testchat antworten erst mit Schlüssel.` }));
+  if (!status.aiConfigured && me().role === "admin") notes.push(h("p", null, `${status.keyName} fehlt noch. `, h("button", { type: "button", class: "linkish", text: "Unter System eintragen", onclick: () => showView("system") })));
   if (me().id === "local") notes.push(h("p", null, "Noch kein Konto angelegt. ", h("button", { type: "button", class: "linkish", text: "Jetzt Admin-Zugang anlegen", onclick: () => showView("users") })));
+  if (checkout === "success") notes.push(h("p", { text: billingBlocked() ? "Danke! Die Zahlung wird noch bestätigt. Lade die Seite in einer Minute neu." : "Danke! Dein Abo ist aktiv. Leg los mit deinem ersten Agenten." }));
+  if (checkout === "cancel") notes.push(h("p", { text: "Die Bezahlung wurde abgebrochen. Du kannst sie unter Konto jederzeit nachholen." }));
   banner.replaceChildren(...notes);
   banner.hidden = !notes.length;
   if (agents.length) loadAgent(agents[0]);
   else { cfg = fromTemplate("blank"); setSave("example", "Neu · wird beim ersten Bearbeiten gespeichert"); renderAll(); resetChat(); renderCaptured(); }
-  showView(local.get("agentenwerk.view") || "home");
+  showView(billingBlocked() || wantAccount ? "account" : checkout === "success" ? "home" : (local.get("agentenwerk.view") || "home"));
 }
 boot();

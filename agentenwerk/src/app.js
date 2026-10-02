@@ -6,7 +6,10 @@ import { crawlSite, CrawlError } from "./crawl.js";
 import { analyzeSite } from "./analyze.js";
 import { runTurn } from "./chat.js";
 import { clientIp, RateLimiter, originAllowed, safeEqual, isLoopback, bearer } from "./security.js";
-import { createAuth, AuthError, ROLES, STATUSES, COOKIE, parseCookies, publicUser, allowed, ownsAgent, temporaryPassword, passwordProblem, verifyPassword, hashPassword, normEmail, validEmail } from "./users.js";
+import { createAuth, AuthError, ROLES, STATUSES, COOKIE, parseCookies, publicUser, allowed, ownsAgent, temporaryPassword, passwordProblem, verifyPassword, hashPassword, normEmail, validEmail, workspaceOf, inWorkspace, canSeeAgent, autopilotAllowed } from "./users.js";
+import { fromEnv, loadSystem, maskedSystem, applySystemUpdate, SystemError, billingEnabled, phoneEnabled, instagramUrl } from "./system.js";
+import { createStripe, verifyWebhook, BillingError, ACTIVE_BILLING } from "./billing.js";
+import { validTwilioRequest, speakable, phoneGreeting, twiml } from "./voice.js";
 import { withDefaults, publicView } from "../public/prompt.js";
 import { parseTable, mapRows, toCsv, TableError } from "./table.js";
 import { createAutopilot, summarize, ROW_STEPS } from "./autopilot.js";
@@ -78,12 +81,46 @@ function sanitizeAgent(input, id) {
   return a;
 }
 
-export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl = crawlSite, analyze = analyzeSite, screenshotter = null, autopilotConcurrency = 2, agency = {}, mailer = null } = {}) {
+export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl = crawlSite, analyze = analyzeSite, screenshotter = null, autopilotConcurrency = 2, agency = {}, mailer = null, factories = null, env = {}, stripeFetch } = {}) {
   const store = new Store(dataDir);
   const screenshotDir = path.join(dataDir, "screenshots");
-  const autopilot = createAutopilot({ store, crawl, analyze, ai, screenshotter, screenshotDir, concurrency: autopilotConcurrency });
-  autopilot.resume().catch((e) => console.error("autopilot resume:", e));
-  const baseUrl = (req) => publicUrl || `http://${req.headers.host}`;
+
+  // Settings from the browser ("System"), with env and constructor values as defaults.
+  let sys = fromEnv(env);
+  function withFallbacks(x) {
+    if (!x.publicUrl && publicUrl) x.publicUrl = publicUrl.replace(/\/$/, "");
+    if (!x.agencyName && agency.name) x.agencyName = agency.name;
+    if (!x.agencyContact && agency.contact) x.agencyContact = agency.contact;
+    return x;
+  }
+  withFallbacks(sys);
+  async function reconfigure() {
+    sys = withFallbacks(await loadSystem(store, env));
+    if (factories?.ai) ai = factories.ai(sys);
+    if (factories?.mailer) mailer = await factories.mailer(sys);
+  }
+  const ready = reconfigure().catch((e) => console.error("settings:", e));
+
+  const monthKey = () => new Date().toISOString().slice(0, 7);
+  class QuotaError extends Error {}
+  const limitsFor = (ws) => (ws === "main" ? null : { analyses: sys.planMonthlyAnalyses, chats: sys.planMonthlyChats });
+  async function usageOf(ws) {
+    return (await store.get("usage", `${ws}:${monthKey()}`)) || { id: `${ws}:${monthKey()}`, ws, month: monthKey(), analyses: 0, chats: 0 };
+  }
+  // Counts monthly usage per workspace; abo workspaces stop at their plan's limit.
+  async function consume(ws, kind, n = 1) {
+    const u = await usageOf(ws);
+    const lim = limitsFor(ws);
+    if (lim && lim[kind] && u[kind] + n > lim[kind]) {
+      throw new QuotaError(kind === "chats" ? "Das Monatskontingent an Chat-Nachrichten ist aufgebraucht." : "Das Monatskontingent an Website-Analysen ist aufgebraucht.");
+    }
+    u[kind] += n;
+    await store.put("usage", u);
+  }
+
+  const autopilot = createAutopilot({ store, crawl, analyze, getAi: () => ai, screenshotter, screenshotDir, concurrency: autopilotConcurrency, consume });
+  ready.then(() => autopilot.resume()).catch((e) => console.error("autopilot resume:", e));
+  const baseUrl = (req) => sys.publicUrl || `http://${req.headers.host}`;
   const auth = createAuth({ store });
   const loginLimit = new RateLimiter(10, 15 * 60_000);
   const signupLimit = new RateLimiter(5, 60 * 60_000);
@@ -99,15 +136,15 @@ export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl 
   }
 
   async function logMessage(conv, role, text) {
-    const row = (await store.get("conversations", conv.id)) || { id: conv.id, agentId: conv.agentId, test: conv.test, startedAt: Date.now(), messages: [] };
+    const row = (await store.get("conversations", conv.id)) || { id: conv.id, agentId: conv.agentId, test: conv.test, channel: conv.channel || "web", from: conv.from, startedAt: Date.now(), messages: [] };
     row.messages.push({ role, text, at: Date.now() });
     row.lastAt = Date.now();
     await store.put("conversations", row);
   }
 
   // Shared by the public widget and the builder's test chat.
-  async function chat(req, res, agent, body, { test = false, corsHeaders = {} } = {}) {
-    if (!ai.configured) throw new HttpError(503, `${ai.keyName || "Der KI-Schlüssel"} fehlt. Trage ihn in die .env ein und starte den Server neu.`);
+  async function chat(req, res, agent, body, { test = false, corsHeaders = {}, ws = agent.ownerId || "main" } = {}) {
+    if (!ai.configured) throw new HttpError(503, `${ai.keyName || "Der KI-Schlüssel"} fehlt. Trage ihn unter System ein.`);
     const text = String(body.message || "").trim();
     if (!text) throw new HttpError(400, "Die Nachricht ist leer.");
     if (text.length > MAX_MESSAGE) throw new HttpError(400, `Die Nachricht ist zu lang (höchstens ${MAX_MESSAGE} Zeichen).`);
@@ -122,6 +159,7 @@ export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl 
     }
     if (conv.turns >= MAX_TURNS) throw new HttpError(429, "Diese Unterhaltung ist sehr lang geworden. Bitte eine neue beginnen.");
     if (conv.busy) throw new HttpError(409, "Die vorige Nachricht wird noch beantwortet.");
+    try { await consume(ws, "chats"); } catch (e) { if (e instanceof QuotaError) throw new HttpError(429, e.message); throw e; }
     conv.busy = true;
     conv.turns++;
     conv.lastAt = Date.now();
@@ -160,7 +198,8 @@ export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl 
 
   // Numbers for the start page, scoped to what this user may see.
   async function overview(me) {
-    const agents = await store.list("agents", (a) => ownsAgent(me, a.id));
+    const ws = workspaceOf(me);
+    const agents = await store.list("agents", (a) => canSeeAgent(me, a));
     const ids = new Set(agents.map((a) => a.id));
     const convs = await store.list("conversations", (c) => ids.has(c.agentId));
     const captured = await store.list("captured", (c) => ids.has(c.agentId) && !c.test);
@@ -175,8 +214,8 @@ export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl 
       })),
     };
     if (me.role !== "kunde") {
-      const leads = await store.list("leads");
-      out.batches = (await store.list("batches")).length;
+      const leads = await store.list("leads", (l) => inWorkspace(l, ws));
+      out.batches = (await store.list("batches", (b) => inWorkspace(b, ws))).length;
       out.leads = {
         total: leads.length,
         contacted: leads.filter((l) => l.sent.length).length,
@@ -189,6 +228,135 @@ export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl 
     }
     if (me.role === "admin") out.pendingUsers = (await auth.users()).filter((u) => u.status === "pending").length;
     return out;
+  }
+
+  /* ---------- subscription ---------- */
+
+  const stripe = () => createStripe({ secretKey: sys.stripeSecretKey, fetchImpl: stripeFetch });
+
+  async function planInfo() {
+    const users = await auth.users();
+    const taken = users.filter((u) => u.role === "abo" && u.billing && ACTIVE_BILLING.has(u.billing.status)).length;
+    return {
+      enabled: billingEnabled(sys), name: sys.planName, price: sys.planPrice, seats: sys.planSeats,
+      seatsLeft: Math.max(0, sys.planSeats - taken), termsUrl: sys.termsUrl, privacyUrl: sys.privacyUrl, imprintUrl: sys.imprintUrl,
+      limits: { analyses: sys.planMonthlyAnalyses, chats: sys.planMonthlyChats, emailsPerDay: sys.planDailyEmails },
+    };
+  }
+
+  async function billingRoute(req, res, me, action) {
+    if (!billingEnabled(sys)) throw new HttpError(503, "Die Bezahlung ist noch nicht eingerichtet.");
+    if (me.role !== "abo") throw new HttpError(400, "Nur Abo-Zugänge haben ein Abo.");
+    const back = `${baseUrl(req)}/?view=account`;
+    try {
+      if (action === "checkout") {
+        if (me.billing && ACTIVE_BILLING.has(me.billing.status)) throw new HttpError(400, "Dein Abo ist bereits aktiv.");
+        const plan = await planInfo();
+        if (plan.seatsLeft <= 0) throw new HttpError(409, "Alle Plätze sind gerade vergeben.");
+        const session = await stripe().checkout({ user: me, plan, successUrl: `${baseUrl(req)}/?checkout=success`, cancelUrl: `${baseUrl(req)}/?checkout=cancel` });
+        return send(res, 200, { url: session.url });
+      }
+      if (!me.billing?.customer) throw new HttpError(400, "Für diesen Zugang gibt es noch kein Abo bei Stripe.");
+      if (action === "portal") return send(res, 200, { url: (await stripe().portal({ customer: me.billing.customer, returnUrl: back })).url });
+      if (!me.billing.subscription) throw new HttpError(400, "Kein laufendes Abo gefunden.");
+      const sub = action === "cancel" ? await stripe().cancelAtPeriodEnd(me.billing.subscription) : await stripe().resume(me.billing.subscription);
+      me.billing = { ...me.billing, cancelAtPeriodEnd: Boolean(sub.cancel_at_period_end), periodEnd: periodEndOf(sub) || me.billing.periodEnd, status: sub.status || me.billing.status };
+      await store.put("users", me);
+      return send(res, 200, { billing: me.billing });
+    } catch (e) {
+      if (e instanceof BillingError) throw new HttpError(502, e.message);
+      throw e;
+    }
+  }
+
+  const periodEndOf = (sub) => (sub?.current_period_end || sub?.items?.data?.[0]?.current_period_end || 0) * 1000 || null;
+
+  async function stripeWebhook(req, res) {
+    const raw = (await readRaw(req, 1_000_000)).toString("utf8");
+    if (!sys.stripeWebhookSecret) return send(res, 503, { error: "Webhook nicht eingerichtet." });
+    let event;
+    try { event = verifyWebhook(raw, req.headers["stripe-signature"], sys.stripeWebhookSecret); } catch (e) { return send(res, 400, { error: e.message }); }
+    const obj = event.data?.object || {};
+    if (event.type === "checkout.session.completed" && obj.client_reference_id) {
+      const u = await store.get("users", obj.client_reference_id);
+      if (u) {
+        u.billing = { ...(u.billing || {}), status: "active", customer: obj.customer, subscription: obj.subscription, since: u.billing?.since || Date.now() };
+        if (u.role !== "admin") u.role = "abo";
+        u.status = "active";
+        await store.put("users", u);
+      }
+    } else if (/^customer\.subscription\.(created|updated|deleted)$/.test(event.type)) {
+      const all = await auth.users();
+      const u = all.find((x) => x.billing?.subscription === obj.id) || (obj.metadata?.userId ? all.find((x) => x.id === obj.metadata.userId) : null);
+      if (u) {
+        u.billing = { ...(u.billing || {}), subscription: obj.id, customer: obj.customer || u.billing?.customer, status: event.type.endsWith("deleted") ? "canceled" : obj.status, cancelAtPeriodEnd: Boolean(obj.cancel_at_period_end), periodEnd: periodEndOf(obj) || u.billing?.periodEnd || null };
+        await store.put("users", u);
+      }
+    }
+    return send(res, 200, { received: true });
+  }
+
+  /* ---------- phone ---------- */
+
+  function sendXml(res, body) {
+    res.writeHead(200, { "content-type": "text/xml; charset=utf-8", "cache-control": "no-store" });
+    res.end(body);
+  }
+
+  async function voiceRoute(req, res, url, id, isTurn) {
+    const raw = (await readRaw(req, 200_000)).toString("utf8");
+    const params = Object.fromEntries(new URLSearchParams(raw));
+    const voice = sys.twilioVoice || "Polly.Vicki-Neural";
+    if (!phoneEnabled(sys)) return sendXml(res, twiml({ say: "Dieser Anschluss ist noch nicht eingerichtet.", voice, hangup: true }));
+    // Twilio signs the exact URL it was configured with: the public base plus path and query.
+    const fullUrl = `${sys.publicUrl || `https://${req.headers.host}`}${req.url}`;
+    if (!validTwilioRequest(sys.twilioAuthToken, fullUrl, params, req.headers["x-twilio-signature"])) return send(res, 403, { error: "Ungültige Signatur." });
+    const agent = await store.get("agents", id);
+    if (!agent || !agent.phoneEnabled) return sendXml(res, twiml({ say: "Dieser Anschluss ist gerade nicht erreichbar. Auf Wiederhören.", voice, hangup: true }));
+    const action = `${sys.publicUrl || `https://${req.headers.host}`}/api/public/voice/${id}/turn`;
+    const key = `call:${params.CallSid || "x"}`;
+    pruneConversations();
+    let conv = conversations.get(key);
+    if (!conv) {
+      conv = { id: newId(), agentId: agent.id, messages: [], turns: 0, lastAt: Date.now(), test: false, channel: "telefon", from: params.From || "", silent: 0 };
+      conversations.set(key, conv);
+    }
+    conv.lastAt = Date.now();
+    if (!isTurn) {
+      const greet = phoneGreeting(agent);
+      await logMessage(conv, "assistant", greet);
+      return sendXml(res, twiml({ say: greet, gatherAction: action, voice }));
+    }
+    const speech = String(params.SpeechResult || "").trim().slice(0, MAX_MESSAGE);
+    if (!speech) {
+      conv.silent++;
+      if (conv.silent >= 2) return sendXml(res, twiml({ say: "Ich lege jetzt auf. Rufen Sie gern jederzeit wieder an. Auf Wiederhören.", voice, hangup: true }));
+      return sendXml(res, twiml({ say: "Entschuldigung, das habe ich nicht verstanden. Was kann ich für Sie tun?", gatherAction: action, voice }));
+    }
+    conv.silent = 0;
+    if (conv.turns >= MAX_TURNS / 2 || !ai.configured) return sendXml(res, twiml({ say: "Vielen Dank für Ihren Anruf. Für alles Weitere meldet sich unser Team bei Ihnen. Auf Wiederhören.", voice, hangup: true }));
+    try { await consume(agent.ownerId || "main", "chats"); } catch (e) {
+      if (e instanceof QuotaError) return sendXml(res, twiml({ say: "Der Assistent ist gerade nicht verfügbar. Bitte versuchen Sie es später noch einmal.", voice, hangup: true }));
+      throw e;
+    }
+    conv.turns++;
+    await logMessage(conv, "user", speech);
+    let say;
+    try {
+      const { reply, refused } = await runTurn({
+        agent, messages: conv.messages, text: speech, ai, channel: "phone",
+        onCapture: async (type, data) => {
+          await store.put("captured", { id: newId(), agentId: agent.id, conversationId: conv.id, type, data: { ...data, phone: data.phone || conv.from }, channel: "telefon", test: false, at: Date.now() });
+        },
+      });
+      say = refused ? "Dabei kann ich leider nicht helfen. Kann ich etwas anderes für Sie tun?" : (speakable(reply) || "Einen Moment bitte, können Sie das noch einmal sagen?");
+    } catch (e) {
+      console.error("voice error:", e?.message || e);
+      say = "Entschuldigung, da ist etwas schiefgegangen. Können Sie Ihre Frage noch einmal stellen?";
+    }
+    await logMessage(conv, "assistant", say);
+    const bye = /\b(tschüss|tschüs|auf wiederhören|wiederhören|ciao|das wars|das war's|danke das war alles)\b/i.test(speech);
+    return sendXml(res, twiml({ say, gatherAction: action, voice, hangup: bye }));
   }
 
   /* ---------- accounts ---------- */
@@ -226,6 +394,7 @@ export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl 
         signupOpen: (await authConfig()).signupOpen && count > 0,
         tokenLogin: Boolean(adminToken),
         user: publicUser(user),
+        plan: await planInfo(),
       });
     }
     if (p === "/api/auth/setup" && req.method === "POST") {
@@ -254,7 +423,17 @@ export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl 
       if (!(await authConfig()).signupOpen) throw new HttpError(403, "Neue Zugänge werden gerade nicht angenommen.");
       if (!signupLimit.allow(clientIp(req))) throw new HttpError(429, "Zu viele Anfragen. Bitte später noch einmal.");
       const body = await readJson(req, 10_000);
-      await auth.create({ name: body.name, email: body.email, password: body.password, company: body.company, note: body.note, role: "team", status: "pending" });
+      // With Stripe set up, self-signup is the paid subscription; otherwise a request an admin approves.
+      if (billingEnabled(sys)) {
+        if (body.acceptTerms !== true) throw new HttpError(400, "Bitte bestätige die AGB und die Datenschutzerklärung.");
+        const plan = await planInfo();
+        if (plan.seatsLeft <= 0) throw new HttpError(409, "Alle Plätze sind gerade vergeben. Trag dich auf die Warteliste ein.");
+        const user = await auth.create({ name: body.name, email: body.email, password: body.password, company: body.company, role: "abo", status: "active", extra: { billing: { status: "checkout", acceptedTermsAt: Date.now() } } });
+        await startSession(res, req, user);
+        const session = await stripe().checkout({ user, plan, successUrl: `${baseUrl(req)}/?checkout=success`, cancelUrl: `${baseUrl(req)}/?checkout=cancel` });
+        return send(res, 201, { ok: true, checkoutUrl: session.url });
+      }
+      await auth.create({ name: body.name, email: body.email, password: body.password, company: body.company, note: body.note, role: "abo", status: "pending" });
       return send(res, 201, { ok: true, message: "Danke! Ein Admin prüft deine Anfrage und schaltet dich frei." });
     }
     return null;
@@ -264,7 +443,7 @@ export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl 
     const view = (u) => publicUser(u);
     if (!id && req.method === "GET") {
       const all = await auth.users();
-      return send(res, 200, { users: all.sort((a, b) => b.createdAt - a.createdAt).map(view), config: await authConfig(), roles: ROLES, statuses: STATUSES });
+      return send(res, 200, { users: all.sort((a, b) => b.createdAt - a.createdAt).map(view), config: await authConfig(), roles: ROLES, statuses: STATUSES, plan: await planInfo(), waitlist: (await store.list("waitlist")).sort((a, b) => b.at - a.at) });
     }
     if (!id && req.method === "POST") {
       const body = await readJson(req, 10_000);
@@ -284,6 +463,7 @@ export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl 
       Object.assign(user, next);
       if (typeof body.name === "string" && body.name.trim()) user.name = body.name.trim().slice(0, 120);
       if (typeof body.company === "string") user.company = body.company.trim().slice(0, 120);
+      if (typeof body.autopilotUnlocked === "boolean") user.autopilotUnlocked = body.autopilotUnlocked;
       if (Array.isArray(body.agentIds)) {
         const agentIds = new Set((await store.list("agents")).map((a) => a.id));
         user.agentIds = body.agentIds.filter((x) => typeof x === "string" && agentIds.has(x)).slice(0, 200);
@@ -336,12 +516,51 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
       throw new HttpError(403, "Ohne ADMIN_TOKEN ist der Builder vor dem ersten Konto nur über localhost erreichbar.");
     }
     if (!allowed(me, req.method, p)) throw new HttpError(403, "Dafür hat dein Zugang keine Berechtigung.");
+    const ws = workspaceOf(me);
+    // A subscription that is not paid (yet) only reaches status, account and billing.
+    if (me.role === "abo" && me.billing && !ACTIVE_BILLING.has(me.billing.status) && !/^\/api\/(status|account|billing|auth\/password)/.test(p)) {
+      throw new HttpError(402, me.billing.status === "checkout" ? "Bitte schließe zuerst die Bezahlung ab." : "Dein Abo ist nicht aktiv.");
+    }
+    if (!autopilotAllowed(me) && /^\/api\/(batches|leads|acquisition)/.test(p)) {
+      throw new HttpError(403, "Autopilot und Akquise werden im 1:1-Mentoring freigeschaltet. Schreib mir auf Instagram.");
+    }
     const m = p.match(/^\/api\/agents\/([\w-]+)(\/[a-z-]+)?$/);
 
     if (p === "/api/status" && req.method === "GET") {
       const pending = me.role === "admin" ? (await auth.users()).filter((u) => u.status === "pending").length : 0;
-      return send(res, 200, { aiConfigured: ai.configured, provider: ai.provider || "", keyName: ai.keyName || "KI-Schlüssel", model: ai.model, publicUrl: baseUrl(req), screenshots: Boolean(screenshotter), steps: ROW_STEPS, me: publicUser(me), pendingUsers: pending, accounts: (await auth.count()) > 0 });
+      const usage = await usageOf(ws);
+      return send(res, 200, {
+        aiConfigured: ai.configured, provider: ai.provider || "", keyName: ai.keyName || "KI-Schlüssel", model: ai.model, publicUrl: baseUrl(req),
+        screenshots: Boolean(screenshotter), steps: ROW_STEPS, me: { ...publicUser(me), autopilotAllowed: autopilotAllowed(me) }, pendingUsers: pending, accounts: (await auth.count()) > 0,
+        mentoring: { instagram: sys.instagram, url: instagramUrl(sys) },
+        usage: { analyses: usage.analyses, chats: usage.chats, limits: limitsFor(ws) },
+        phone: { enabled: phoneEnabled(sys) },
+        billing: me.billing ? { status: me.billing.status, cancelAtPeriodEnd: Boolean(me.billing.cancelAtPeriodEnd), periodEnd: me.billing.periodEnd || null } : null,
+        plan: { name: sys.planName, price: sys.planPrice },
+      });
     }
+    if (p === "/api/system" && req.method === "GET") return send(res, 200, { system: maskedSystem(sys), webhookUrl: `${baseUrl(req)}/api/public/stripe/webhook`, voiceBase: `${baseUrl(req)}/api/public/voice/`, mail: Boolean(mailer), ai: ai.configured });
+    if (p === "/api/system" && req.method === "PUT") {
+      const body = await readJson(req, 50_000);
+      let next;
+      try { next = applySystemUpdate((await store.get("config", "system")) || {}, body); } catch (e) { if (e instanceof SystemError) throw new HttpError(400, e.message); throw e; }
+      await store.put("config", next);
+      await reconfigure();
+      return send(res, 200, { system: maskedSystem(sys), mail: Boolean(mailer), ai: ai.configured });
+    }
+    if (p === "/api/system/test-mail" && req.method === "POST") {
+      if (!mailer) throw new HttpError(503, "Der E-Mail-Versand ist noch nicht eingerichtet.");
+      const to = me.email || sys.smtpFrom || sys.smtpUser;
+      if (!isEmail(to)) throw new HttpError(400, "Keine Empfängeradresse bekannt.");
+      try { await mailer.send({ to, subject: "Test von Agentenwerk", text: "Der E-Mail-Versand funktioniert.", unsubscribeUrl: `${baseUrl(req)}/` }); } catch (e) { throw new HttpError(502, `Versand fehlgeschlagen: ${e?.message || e}`); }
+      return send(res, 200, { ok: true, to });
+    }
+    if (p === "/api/account" && req.method === "GET") {
+      const usage = await usageOf(ws);
+      return send(res, 200, { me: publicUser(me), billing: me.billing || null, usage: { analyses: usage.analyses, chats: usage.chats, limits: limitsFor(ws) }, plan: await planInfo(), mentoring: { instagram: sys.instagram, url: instagramUrl(sys) }, autopilotAllowed: autopilotAllowed(me) });
+    }
+    const bl = p.match(/^\/api\/billing\/(checkout|portal|cancel|resume)$/);
+    if (bl && req.method === "POST") return billingRoute(req, res, me, bl[1]);
     if (p === "/api/overview" && req.method === "GET") return send(res, 200, await overview(me));
     if (p === "/api/auth/password" && req.method === "POST") {
       if (["token", "local"].includes(me.id)) throw new HttpError(400, "Dieser Zugang hat kein Passwort.");
@@ -369,24 +588,25 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
       }
     }
     const b = p.match(/^\/api\/batches(?:\/([\w-]+)(\/[a-z]+)?)?$/);
-    if (b) return batchRoute(req, res, url, b[1], b[2]);
-    if (p === "/api/settings") return settingsRoute(req, res);
-    if (p === "/api/acquisition") return send(res, 200, await acquisitionSummary(req));
+    if (b) return batchRoute(req, res, url, b[1], b[2], ws);
+    if (p === "/api/settings") return settingsRoute(req, res, ws);
+    if (p === "/api/acquisition") return send(res, 200, await acquisitionSummary(req, ws));
     const l = p.match(/^\/api\/leads(?:\/([\w-]+)(\/[a-z-]+)?)?$/);
     if (l) return leadRoute(req, res, l[1], l[2], me);
     if (p === "/api/agents" && req.method === "GET") {
-      const agents = await store.list("agents", (a) => ownsAgent(me, a.id));
+      const agents = await store.list("agents", (a) => canSeeAgent(me, a));
       return send(res, 200, agents.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)));
     }
     if (p === "/api/agents" && req.method === "POST") {
       const body = await readJson(req);
-      const agent = { ...sanitizeAgent(body, newId()), createdAt: Date.now(), updatedAt: Date.now() };
+      const agent = { ...sanitizeAgent(body, newId()), ownerId: ws, batchId: undefined, preview: undefined, createdAt: Date.now(), updatedAt: Date.now() };
       await store.put("agents", agent);
       return send(res, 201, agent);
     }
     if (p === "/api/analyze" && req.method === "POST") {
       if (!ai.configured) throw new HttpError(503, `${ai.keyName || "Der KI-Schlüssel"} fehlt. Trage ihn in die .env ein und starte den Server neu.`);
       if (!analyzeLimit.allow(clientIp(req))) throw new HttpError(429, "Zu viele Analysen. Bitte eine Minute warten.");
+      try { await consume(ws, "analyses"); } catch (e) { if (e instanceof QuotaError) throw new HttpError(429, e.message); throw e; }
       const body = await readJson(req);
       const out = sse(res);
       try {
@@ -404,17 +624,20 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
     if (p === "/api/test-chat" && req.method === "POST") {
       const body = await readJson(req);
       const agent = sanitizeAgent(body.agent || {}, String(body.agent?.id || "test"));
-      if (!ownsAgent(me, agent.id)) throw new HttpError(403, "Dieser Agent gehört nicht zu deinem Zugang.");
-      return chat(req, res, agent, body, { test: true });
+      const stored = await store.get("agents", agent.id);
+      if (stored ? !canSeeAgent(me, stored) : me.role === "kunde") throw new HttpError(403, "Dieser Agent gehört nicht zu deinem Zugang.");
+      return chat(req, res, agent, body, { test: true, ws: stored?.ownerId || ws });
     }
     if (m) {
       const [, id, sub] = m;
-      const agent = ownsAgent(me, id) ? await store.get("agents", id) : null;
+      const found = await store.get("agents", id);
+      const agent = canSeeAgent(me, found) ? found : null;
       if (!agent) throw new HttpError(404, "Agent nicht gefunden.");
       if (!sub && req.method === "GET") return send(res, 200, agent);
       if (!sub && req.method === "PUT") {
         const body = await readJson(req);
-        const next = { ...sanitizeAgent(body, id), createdAt: agent.createdAt, updatedAt: Date.now() };
+        // Ownership and autopilot links stay as stored, whatever the client sends.
+        const next = { ...sanitizeAgent(body, id), ownerId: agent.ownerId, batchId: agent.batchId, preview: agent.preview, prospect: agent.prospect, createdAt: agent.createdAt, updatedAt: Date.now() };
         await store.put("agents", next);
         return send(res, 200, next);
       }
@@ -444,23 +667,24 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
     for (const id of set) await fs.rm(path.join(screenshotDir, `${id}.jpg`), { force: true });
   }
 
-  async function batchRoute(req, res, url, id, sub) {
+  async function batchRoute(req, res, url, id, sub, ws) {
     if (!id && req.method === "GET") {
-      const all = await store.list("batches");
+      const all = await store.list("batches", (x) => inWorkspace(x, ws));
       return send(res, 200, all.map(summarize).sort((a, b) => b.createdAt - a.createdAt));
     }
     if (!id && req.method === "POST") {
-      if (!ai.configured) throw new HttpError(503, `${ai.keyName || "Der KI-Schlüssel"} fehlt. Trage ihn in die .env ein und starte den Server neu.`);
+      if (!ai.configured) throw new HttpError(503, `${ai.keyName || "Der KI-Schlüssel"} fehlt. Trage ihn unter System ein.`);
       const buf = await readRaw(req, 5_000_000);
       let mapped;
       try { mapped = mapRows(parseTable(buf, url.searchParams.get("filename") || "")); } catch (e) {
         if (e instanceof TableError) throw new HttpError(400, e.message);
         throw new HttpError(400, "Die Tabelle konnte nicht gelesen werden. Bitte als .xlsx oder .csv speichern.");
       }
-      const batch = await autopilot.createBatch({ name: (url.searchParams.get("name") || "").slice(0, 120), rows: mapped.rows, skipped: mapped.skipped });
+      const batch = await autopilot.createBatch({ name: (url.searchParams.get("name") || "").slice(0, 120), rows: mapped.rows, skipped: mapped.skipped, ownerId: ws });
       return send(res, 201, { ...summarize(batch), columns: mapped.columns, skipped: mapped.skipped });
     }
-    const batch = id && await store.get("batches", id);
+    const found = id && await store.get("batches", id);
+    const batch = found && inWorkspace(found, ws) ? found : null;
     if (!batch) throw new HttpError(404, "Durchlauf nicht gefunden.");
     if (!sub && req.method === "GET") {
       return send(res, 200, { ...summarize(batch), skipped: batch.skipped || [], rows: batch.rows.map(({ claimed, ...r }) => r) });
@@ -494,6 +718,18 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
   }
 
   async function publicRoute(req, res, url) {
+    if (url.pathname === "/api/public/plan" && req.method === "GET") return send(res, 200, await planInfo());
+    if (url.pathname === "/api/public/waitlist" && req.method === "POST") {
+      if (!signupLimit.allow(clientIp(req))) throw new HttpError(429, "Zu viele Anfragen. Bitte später noch einmal.");
+      const body = await readJson(req, 5_000);
+      const email = normEmail(body.email);
+      if (!validEmail(email)) throw new HttpError(400, "Bitte eine gültige E-Mail-Adresse angeben.");
+      await store.put("waitlist", { id: email, email, name: String(body.name || "").trim().slice(0, 120), at: Date.now() });
+      return send(res, 201, { ok: true, message: "Du stehst auf der Warteliste. Wir melden uns, sobald ein Platz frei wird." });
+    }
+    if (url.pathname === "/api/public/stripe/webhook" && req.method === "POST") return stripeWebhook(req, res);
+    const vc = url.pathname.match(/^\/api\/public\/voice\/([\w-]+)(\/turn)?$/);
+    if (vc && req.method === "POST") return voiceRoute(req, res, url, vc[1], Boolean(vc[2]));
     const pv = url.pathname.match(/^\/api\/public\/agents\/([\w-]+)\/(preview|screenshot)$/);
     if (pv && req.method === "GET") return previewRoute(req, res, pv[1], pv[2], url);
     const un = url.pathname.match(/^\/api\/public\/unsubscribe\/([\w-]{10,})$/);
@@ -534,8 +770,9 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
   const tasks = new Set(); // lead ids with a draft or send in progress
   const DAY = 86_400_000;
 
-  async function getSettings() {
-    const row = await store.get("settings", "main");
+  const settingsId = (ws) => (ws === "main" ? "main" : `ws:${ws}`);
+  async function getSettings(ws = "main") {
+    const row = await store.get("settings", settingsId(ws));
     return { ...DEFAULT_SETTINGS, ...(row || {}), sender: { ...DEFAULT_SETTINGS.sender, ...(row?.sender || {}) } };
   }
 
@@ -553,32 +790,34 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
     }
   }
 
-  async function sentToday() {
+  async function sentToday(ws = "main") {
     const since = Date.now() - DAY;
-    return (await store.list("leads")).reduce((n, l) => n + l.sent.filter((x) => x.at >= since).length, 0);
+    return (await store.list("leads", (l) => inWorkspace(l, ws))).reduce((n, l) => n + l.sent.filter((x) => x.at >= since).length, 0);
   }
+  const dailyLimitFor = (ws) => (ws === "main" ? mailer?.dailyLimit || sys.dailyLimit || 0 : sys.planDailyEmails || 0);
 
-  async function acquisitionSummary(req) {
-    const [leads, settings] = await Promise.all([store.list("leads"), getSettings()]);
+  async function acquisitionSummary(req, ws = "main") {
+    const [leads, settings] = await Promise.all([store.list("leads", (l) => inWorkspace(l, ws)), getSettings(ws)]);
+    const mine = new Set(leads.map((l) => l.id));
     return {
       stages: STAGES, funnel: FUNNEL,
       summary: summarizeLeads(leads, settings),
-      mail: { configured: Boolean(mailer), from: mailer?.from || "", dailyLimit: mailer?.dailyLimit || 0, sentToday: await sentToday() },
+      mail: { configured: Boolean(mailer), from: mailer?.from || "", dailyLimit: dailyLimitFor(ws), sentToday: await sentToday(ws) },
       senderMissing: senderComplete(settings.sender),
-      tasks: [...tasks],
+      tasks: [...tasks].filter((t) => mine.has(t)),
       publicUrl: baseUrl(req),
     };
   }
 
-  async function settingsRoute(req, res) {
-    if (req.method === "GET") return send(res, 200, await getSettings());
+  async function settingsRoute(req, res, ws = "main") {
+    if (req.method === "GET") return send(res, 200, await getSettings(ws));
     if (req.method !== "PUT") throw new HttpError(405, "Methode nicht erlaubt.");
     const body = await readJson(req, 20_000);
-    const cur = await getSettings();
+    const cur = await getSettings(ws);
     const str = (v, n = 300) => (typeof v === "string" ? v.trim().slice(0, n) : "");
     const s = body.sender || {};
     const next = {
-      id: "main",
+      id: settingsId(ws),
       sender: { name: str(s.name), company: str(s.company), email: str(s.email), phone: str(s.phone), website: str(s.website), address: str(s.address, 500) },
       followUpDays: Math.max(0, Math.min(30, Number(body.followUpDays ?? cur.followUpDays) || 0)),
       pitch: str(body.pitch, 400),
@@ -596,15 +835,16 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
   async function makeDraft(lead, kind) {
     const agent = await store.get("agents", lead.agentId);
     if (!agent) throw new HttpError(404, "Der Agent zu diesem Lead wurde gelöscht.");
-    lead.draft = await generateDraft({ ai, agent, lead, settings: await getSettings(), kind });
+    lead.draft = await generateDraft({ ai, agent, lead, settings: await getSettings(lead.ownerId || "main"), kind });
     if (["neu"].includes(lead.stage)) lead.stage = "entwurf";
     addEvent(lead, "draft", { kind });
     await store.put("leads", lead);
   }
 
   async function sendLead(lead, req) {
-    if (!mailer) throw new HttpError(503, "Kein E-Mail-Versand eingerichtet. Trage SMTP_HOST, SMTP_USER und SMTP_PASS in die .env ein.");
-    const settings = await getSettings();
+    if (!mailer) throw new HttpError(503, "Kein E-Mail-Versand eingerichtet. Trage die SMTP-Daten unter System ein.");
+    const lws = lead.ownerId || "main";
+    const settings = await getSettings(lws);
     const missing = senderComplete(settings.sender);
     if (missing.length) throw new HttpError(400, `Bitte zuerst die Absenderangaben ergänzen: ${missing.join(", ")}.`);
     if (!isEmail(lead.email)) throw new HttpError(400, `${lead.company || "Dieser Lead"} hat keine gültige E-Mail-Adresse.`);
@@ -612,7 +852,8 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
     const blocked = await store.get("blocklist", lead.email.toLowerCase());
     if (blocked) throw new HttpError(400, `${lead.email} hat sich abgemeldet.`);
     if (!lead.draft) throw new HttpError(400, "Es gibt noch keinen Entwurf.");
-    if (await sentToday() >= mailer.dailyLimit) throw new HttpError(429, `Tageslimit von ${mailer.dailyLimit} E-Mails erreicht. Morgen geht es weiter.`);
+    const limit = dailyLimitFor(lws);
+    if (await sentToday(lws) >= limit) throw new HttpError(429, `Tageslimit von ${limit} E-Mails erreicht. Morgen geht es weiter.`);
     const base = baseUrl(req);
     const unsubscribeUrl = `${base}/abmelden/${lead.unsubToken}`;
     const agent = await store.get("agents", lead.agentId);
@@ -650,20 +891,22 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
   }
 
   async function leadRoute(req, res, id, sub, me = {}) {
-    const settings = await getSettings();
+    const ws = workspaceOf(me);
+    const settings = await getSettings(ws);
     if (!id && req.method === "GET") {
-      const leads = await store.list("leads");
+      const leads = await store.list("leads", (l) => inWorkspace(l, ws));
       return send(res, 200, leads.sort((a, b) => b.updatedAt - a.updatedAt).map((l) => leadView(l, settings)));
     }
     if (id === "bulk" && req.method === "POST") {
       const body = await readJson(req, 100_000);
-      const ids = (Array.isArray(body.ids) ? body.ids : []).filter((x) => typeof x === "string").slice(0, 500);
+      const own = new Set((await store.list("leads", (l) => inWorkspace(l, ws))).map((l) => l.id));
+      const ids = (Array.isArray(body.ids) ? body.ids : []).filter((x) => typeof x === "string" && own.has(x)).slice(0, 500);
       if (body.action === "draft") {
         if (!ai.configured) throw new HttpError(503, `${ai.keyName || "Der KI-Schlüssel"} fehlt.`);
         return send(res, 202, { started: runBulk(ids, (lead) => makeDraft(lead, followUpDue(lead, settings) ? "followup" : "first")) });
       }
       if (body.action === "send") {
-        if (!mailer) throw new HttpError(503, "Kein E-Mail-Versand eingerichtet. Trage SMTP_HOST, SMTP_USER und SMTP_PASS in die .env ein.");
+        if (!mailer) throw new HttpError(503, "Kein E-Mail-Versand eingerichtet. Trage die SMTP-Daten unter System ein.");
         return send(res, 202, { started: runBulk(ids, async (lead) => { await sendLead(lead, req); await new Promise((r) => setTimeout(r, 1500)); }) });
       }
       if (body.action === "stage" && STAGES[body.stage]) {
@@ -675,7 +918,8 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
       }
       throw new HttpError(400, "Unbekannte Aktion.");
     }
-    const lead = id && await store.get("leads", id);
+    const foundLead = id && await store.get("leads", id);
+    const lead = foundLead && inWorkspace(foundLead, ws) ? foundLead : null;
     if (!lead) throw new HttpError(404, "Lead nicht gefunden.");
     if (!sub && req.method === "GET") return send(res, 200, leadView(lead, settings));
     if (!sub && req.method === "PATCH") {
@@ -714,7 +958,7 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
     }
     // A copy of the exact e-mail to the sender's own address. Changes nothing on the lead.
     if (sub === "/test-send" && req.method === "POST") {
-      if (!mailer) throw new HttpError(503, "Kein E-Mail-Versand eingerichtet. Trage SMTP_HOST, SMTP_USER und SMTP_PASS in die .env ein.");
+      if (!mailer) throw new HttpError(503, "Kein E-Mail-Versand eingerichtet. Trage die SMTP-Daten unter System ein.");
       if (!lead.draft) throw new HttpError(400, "Es gibt noch keinen Entwurf.");
       if (!isEmail(settings.sender.email)) throw new HttpError(400, "Trage zuerst deine E-Mail-Adresse in den Einstellungen ein.");
       if (!testLimit.allow(me.id || "x")) throw new HttpError(429, "Genug Vorschauen für den Moment. Bitte etwas warten.");
@@ -768,8 +1012,14 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
       description: a.source?.preview?.description || "",
       headings: a.source?.preview?.headings || [],
       services: a.services.split("\n").map((x) => x.trim()).filter(Boolean).slice(0, 6),
-      agency: { name: agency.name || "", contact: agency.contact || "" },
+      agency: await agencyFor(agent.ownerId || "main"),
     });
+  }
+
+  async function agencyFor(ws) {
+    if (ws === "main") return { name: sys.agencyName || "", contact: sys.agencyContact || "" };
+    const s = (await getSettings(ws)).sender;
+    return { name: s.company || s.name || "", contact: s.email || "" };
   }
 
   async function staticRoute(req, res, url) {
@@ -793,6 +1043,7 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
 
   return async function handle(req, res) {
     const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+    await ready;
     try {
       if (url.pathname.startsWith("/api/public/")) return await publicRoute(req, res, url);
       if (url.pathname.startsWith("/api/")) return await adminRoute(req, res, url);

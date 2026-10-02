@@ -3,12 +3,13 @@
 
 const ROLE_HINT = {
   admin: "Alles, auch Nutzerverwaltung",
-  team: "Builder, Autopilot und Akquise",
+  team: "Builder, Autopilot und Akquise in deinem Bereich",
+  abo: "Eigener Bereich mit Agenten und Demos. Autopilot nach Freischaltung im Mentoring",
   kunde: "Nur die zugewiesenen Agenten im Builder",
 };
 
 export function mountUsers({ root, api, h, getStatus, onChange }) {
-  let users = [], config = { signupOpen: true }, roles = {}, statuses = {};
+  let users = [], config = { signupOpen: true }, roles = {}, statuses = {}, plan = null, waitlist = [];
   let agents = [];
   let filter = "alle", query = "";
   let secret = null;      // { name, email, password } shown once
@@ -32,7 +33,7 @@ export function mountUsers({ root, api, h, getStatus, onChange }) {
     if (me().id === "local") { render(); return; }
     try {
       const r = await api("GET", "/api/users");
-      users = r.users; config = r.config; roles = r.roles; statuses = r.statuses;
+      users = r.users; config = r.config; roles = r.roles; statuses = r.statuses; plan = r.plan; waitlist = r.waitlist || [];
       agents = await api("GET", "/api/agents");
     } catch (e) { message = { kind: "err", text: e.message }; }
     render();
@@ -64,7 +65,7 @@ export function mountUsers({ root, api, h, getStatus, onChange }) {
   }
 
   function pendingCard(u) {
-    let role = "team";
+    let role = u.role && u.role !== "team" ? u.role : "abo";
     const sel = roleSelect(role, (v) => { role = v; }, `pr_${u.id}`);
     const asking = confirm?.id === u.id && confirm.kind === "reject";
     return h("article", { class: "ucard pending" },
@@ -94,6 +95,17 @@ export function mountUsers({ root, api, h, getStatus, onChange }) {
         h("span", { class: "meta", text: `Letzte Anmeldung: ${ago(u.lastLoginAt)}` }),
         u.approvedBy ? h("span", { class: "meta", text: `Freigeschaltet von ${u.approvedBy}` }) : null),
       h("div", { class: "field" }, h("label", { for: `ro_${u.id}`, text: "Rolle" }), roleSelect(u.role, (v) => patch(u, { role: v }, `${u.name} ist jetzt ${roles[v]}.`), `ro_${u.id}`), h("span", { class: "hint", text: ROLE_HINT[u.role] })));
+
+    if (u.role === "abo") {
+      const BILL = { active: ["Bezahlt", "st-interessiert"], trialing: ["Testphase", "st-interessiert"], past_due: ["Zahlung offen", "st-entwurf"], checkout: ["Bezahlung nicht abgeschlossen", "st-entwurf"], canceled: ["Abo beendet", "st-abgemeldet"] };
+      const [label, cls] = u.billing ? (BILL[u.billing.status] || [u.billing.status, "st-entwurf"]) : ["Ohne Bezahlung (von dir freigegeben)", "st-neu"];
+      const sw = h("input", { type: "checkbox", id: `ap_${u.id}`, role: "switch" });
+      sw.checked = Boolean(u.autopilotUnlocked);
+      sw.addEventListener("change", () => patch(u, { autopilotUnlocked: sw.checked }, sw.checked ? `Autopilot für ${u.name} freigeschaltet.` : `Autopilot für ${u.name} gesperrt.`));
+      card.append(
+        h("div", { class: "toolbar" }, h("span", { class: "pill " + cls, text: label }), u.billing?.cancelAtPeriodEnd ? h("span", { class: "meta", text: `gekündigt zum ${new Date(u.billing.periodEnd).toLocaleDateString("de-DE")}` }) : null),
+        h("label", { class: "switch", for: `ap_${u.id}` }, sw, h("span", null, h("b", { text: "Autopilot & Akquise freigeschaltet" }), h("span", { class: "meta", text: " · nach dem Mentoring-Gespräch" }))));
+    }
 
     if (u.role === "kunde") {
       const assigned = new Set(u.agentIds || []);
@@ -189,7 +201,7 @@ export function mountUsers({ root, api, h, getStatus, onChange }) {
       h("div", { class: "kpis four" },
         statTile("Aktiv", users.filter((u) => u.status === "active").length, "können sich anmelden"),
         statTile("Warten", pending.length, pending.length ? "auf deine Freischaltung" : "keine offenen Anfragen"),
-        statTile("Kunden", users.filter((u) => u.role === "kunde").length, "sehen nur ihre Agenten"),
+        plan?.enabled ? statTile("Abo-Plätze", `${plan.seats - plan.seatsLeft} / ${plan.seats}`, plan.seatsLeft ? `${plan.seatsLeft} frei · ${plan.price} € / Monat` : "ausgebucht, Warteliste läuft") : statTile("Kunden", users.filter((u) => u.role === "kunde").length, "sehen nur ihre Agenten"),
         statTile("Gesperrt", users.filter((u) => u.status === "blocked").length, null)),
       h("div", { class: "users-layout" },
         h("div", { class: "users-main" },
@@ -197,9 +209,12 @@ export function mountUsers({ root, api, h, getStatus, onChange }) {
           pending.length ? h("div", { class: "ucards" }, pending.map(pendingCard))
             : h("div", { class: "panel empty" }, h("strong", { text: "Keine offenen Anfragen" }), config.signupOpen ? `Neue Leute beantragen einen Zugang über die Anmeldeseite (${getStatus().publicUrl}/).` : "Die Registrierung ist geschlossen. Lade Leute direkt ein."),
           h("div", { class: "section-row" }, h("h3", { class: "section-title", text: "Alle Zugänge" }), search),
-          h("div", { class: "chips" }, chip("alle", "Alle", rest.length), chip("admin", "Admins", rest.filter((u) => u.role === "admin").length), chip("team", "Team", rest.filter((u) => u.role === "team").length), chip("kunde", "Kunden", rest.filter((u) => u.role === "kunde").length), chip("blocked", "Gesperrt", rest.filter((u) => u.status === "blocked").length)),
+          h("div", { class: "chips" }, chip("alle", "Alle", rest.length), chip("admin", "Admins", rest.filter((u) => u.role === "admin").length), chip("team", "Team", rest.filter((u) => u.role === "team").length), chip("abo", "Abo", rest.filter((u) => u.role === "abo").length), chip("kunde", "Kunden", rest.filter((u) => u.role === "kunde").length), chip("blocked", "Gesperrt", rest.filter((u) => u.status === "blocked").length)),
           shown.length ? h("div", { class: "ucards" }, shown.map(userCard)) : h("div", { class: "panel empty" }, h("strong", { text: "Niemand gefunden" }), "Ändere Filter oder Suche.")),
         h("aside", { class: "users-side" }, inviteCard(),
+          waitlist.length ? h("section", { class: "panel ucard" }, h("h3", { text: `Warteliste (${waitlist.length})` }),
+            h("ul", { class: "waitlist" }, waitlist.slice(0, 30).map((w) => h("li", null, h("strong", { text: w.name || w.email }), h("span", { class: "meta", text: `${w.email} · ${new Date(w.at).toLocaleDateString("de-DE")}` })))),
+            h("p", { class: "hint", text: "Wird ein Platz frei, schreib den Leuten direkt oder lade sie unter „Nutzer einladen“ ein." })) : null,
           h("section", { class: "panel ucard" }, h("h3", { text: "Rollen" }), h("dl", { class: "roles" }, Object.entries(ROLE_HINT).flatMap(([k, v]) => [h("dt", { text: roles[k] || k }), h("dd", { text: v })]))))),
     ].filter(Boolean));
   }

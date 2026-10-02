@@ -49,12 +49,16 @@ function clean(o) {
   return r;
 }
 
-export function systemFor(agentCfg, now = new Date()) {
+const PHONE = "Du führst gerade ein Telefongespräch. Deine Antworten werden vorgelesen: höchstens zwei kurze Sätze, keine Aufzählungen, keine Links, keine Sonderzeichen. Nenne Zahlen so, wie man sie spricht. Frag Telefonnummern nicht ab, die Nummer des Anrufers ist bekannt. Wenn der Anrufer sich verabschiedet, verabschiede dich kurz.";
+
+export function systemFor(agentCfg, now = new Date(), channel = "web") {
   const agent = withDefaults(agentCfg);
   const date = now.toLocaleDateString("de-DE", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "Europe/Berlin" });
   return [
     { type: "text", text: activePrompt(agent), cache_control: { type: "ephemeral" } },
-    { type: "text", text: `Du bist live im Chat-Widget auf der Website. Deine Begrüßung wurde dem Besucher bereits angezeigt: „${agent.welcome}“\nAntworte ausschließlich als ${agent.name || "der Assistent"}, ohne Meta-Kommentare. Heute ist ${date}.` },
+    channel === "phone"
+      ? { type: "text", text: `${PHONE}\nAntworte ausschließlich als ${agent.name || "der Assistent"}, ohne Meta-Kommentare. Heute ist ${date}.` }
+      : { type: "text", text: `Du bist live im Chat-Widget auf der Website. Deine Begrüßung wurde dem Besucher bereits angezeigt: „${agent.welcome}“\nAntworte ausschließlich als ${agent.name || "der Assistent"}, ohne Meta-Kommentare. Heute ist ${date}.` },
   ];
 }
 
@@ -68,10 +72,10 @@ export function systemFor(agentCfg, now = new Date()) {
  * @param {(type:string, data:object)=>Promise<void>} p.onCapture   persists a lead or booking request
  * @returns {Promise<{reply:string, refused:boolean}>}
  */
-export async function runTurn({ agent: agentCfg, messages, text, ai, onText = () => {}, onCapture = async () => {} }) {
+export async function runTurn({ agent: agentCfg, messages, text, ai, onText = () => {}, onCapture = async () => {}, channel = "web" }) {
   const agent = withDefaults(agentCfg);
   const tools = chatTools(agent);
-  const system = systemFor(agent);
+  const system = systemFor(agent, new Date(), channel);
   const turn = [{ role: "user", content: text }];
   let reply = "";
   let jsonRetries = 0;
