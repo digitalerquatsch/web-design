@@ -1,0 +1,19 @@
+{
+  "name": "agentenwerk",
+  "version": "0.1.0",
+  "private": true,
+  "description": "No-Code-Builder für Website-Chatbots: Website einlesen, Agent konfigurieren, testen und per Script-Tag einbinden.",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=20.12"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0",
+    "zod": "^4.6.5"
+  }
+}

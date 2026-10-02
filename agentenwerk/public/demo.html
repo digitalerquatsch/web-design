@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Widget-Testseite · Agentenwerk</title>
+<link rel="icon" href="data:,">
+<style>
+  :root { color-scheme: light; }
+  body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: #f6f7f9; color: #1b1f24; }
+  main { max-width: 720px; margin: 0 auto; padding: 64px 20px; }
+  h1 { font-size: 32px; margin: 0 0 12px; }
+  p { line-height: 1.6; color: #4b5563; }
+  .box { margin-top: 32px; padding: 20px; border: 1px dashed #c7ccd4; border-radius: 12px; background: #fff; }
+  code { background: #eef0f3; padding: 2px 6px; border-radius: 4px; font-size: 13px; overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+<main>
+  <h1>So sieht dein Widget auf einer Website aus</h1>
+  <p>Diese Seite steht stellvertretend für deine eigene Website. Unten rechts (oder links) findest du den Chat-Button. Alles, was hier im Chat passiert, landet im Builder unter „Erfasst“.</p>
+  <div class="box">
+    <p id="info">Lade Agent …</p>
+  </div>
+</main>
+<script>
+  (function () {
+    var id = new URLSearchParams(location.search).get("agent");
+    var info = document.getElementById("info");
+    if (!id) { info.textContent = "Keine Agent-ID angegeben. Öffne diese Seite über „Auf Testseite ansehen“ im Builder."; return; }
+    info.textContent = "Eingebunden mit: ";
+    var code = document.createElement("code");
+    code.textContent = '<script src="' + location.origin + '/widget.js" data-agent="' + id + '" defer><\/script>';
+    info.appendChild(code);
+    var s = document.createElement("script");
+    s.src = "/widget.js";
+    s.setAttribute("data-agent", id);
+    document.body.appendChild(s);
+  })();
+</script>
+</body>
+</html>

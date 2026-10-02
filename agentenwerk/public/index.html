@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Agentenwerk</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div id="gate" class="panel gate" hidden>
+  <h2>Anmelden</h2>
+  <p class="hint" id="gateMsg">Bitte den Admin-Token aus der <code>.env</code> eingeben.</p>
+  <form id="gateForm" class="fields" style="gap:10px">
+    <input class="input" id="gateToken" type="password" autocomplete="current-password" placeholder="ADMIN_TOKEN" aria-label="Admin-Token">
+    <button class="btn primary" type="submit">Anmelden</button>
+  </form>
+</div>
+
+<div id="appRoot" hidden>
+  <header class="top">
+    <div class="brand"><div class="brand-mark" aria-hidden="true">A</div><h1>Agentenwerk</h1></div>
+    <div class="agent-switch">
+      <label for="agentSelect" class="hint">Agent</label>
+      <select id="agentSelect"></select>
+      <button class="btn" id="newBtn" type="button">+ Neuer Agent</button>
+      <span class="save-state" id="saveState" data-s="example">Neu</span>
+    </div>
+  </header>
+  <div class="banner" id="banner" hidden></div>
+
+  <main class="bench" id="bench" data-mview="build">
+    <div class="mobile-tabs" role="tablist">
+      <button type="button" role="tab" id="mBuild" aria-selected="true">Konfigurieren</button>
+      <button type="button" role="tab" id="mTest" aria-selected="false">Testen</button>
+    </div>
+    <nav class="rail" id="rail" aria-label="Bereiche"></nav>
+    <div class="form-wrap"><section class="panel form" id="form"></section></div>
+    <aside class="side">
+      <div class="tabs" role="tablist">
+        <button type="button" role="tab" id="tChat" aria-selected="true">Testchat</button>
+        <button type="button" role="tab" id="tCap" aria-selected="false">Erfasst<span class="count" id="capCount">0</span></button>
+      </div>
+      <div id="chatView">
+        <div class="widget" id="widget">
+          <div class="w-head">
+            <div class="w-av" id="wAv">A</div>
+            <div class="w-title"><strong id="wName">Agent</strong><span>Online</span></div>
+            <button class="x" type="button" id="resetChat" title="Unterhaltung neu starten">Neu starten</button>
+          </div>
+          <div class="w-body" id="wBody" aria-live="polite"></div>
+          <div class="w-quick" id="wQuick"></div>
+          <form class="w-input" id="wForm">
+            <input id="wInput" type="text" autocomplete="off" maxlength="2000" placeholder="Nachricht schreiben …" aria-label="Nachricht an den Agenten">
+            <button type="submit" id="wSend">Senden</button>
+          </form>
+          <div class="w-foot" id="wFoot">Testmodus</div>
+        </div>
+        <p class="side-note">Der Testchat nutzt immer den aktuellen Stand links, auch ungespeicherte Änderungen. Erfasste Testdaten sind als „Test“ markiert.</p>
+      </div>
+      <div id="capView" class="panel captured" hidden></div>
+    </aside>
+  </main>
+</div>
+<script type="module" src="/app.js"></script>
+</body>
+</html>
