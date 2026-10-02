@@ -128,6 +128,23 @@ export function createAuth({ store }) {
       return token;
     },
 
+    async sessionForToken(token) {
+      if (!token) return null;
+      const s = await store.get("sessions", sha(token));
+      return s && s.expiresAt >= Date.now() ? s : null;
+    },
+
+    async setSessionSupport(token, userId) {
+      const s = await store.get("sessions", sha(token));
+      if (!s) return;
+      if (userId) s.supportFor = userId; else delete s.supportFor;
+      await store.put("sessions", s);
+    },
+
+    async clearSupport(userId) {
+      for (const s of await store.list("sessions", (x) => x.supportFor === userId)) { delete s.supportFor; await store.put("sessions", s); }
+    },
+
     async userForToken(token) {
       if (!token) return null;
       const s = await store.get("sessions", sha(token));
@@ -174,7 +191,7 @@ export function allowed(user, method, path) {
   if (/^\/api\/(users|auth\/config|system|jarvis)/.test(path)) return false;
   if (user.role === "team" || user.role === "abo") return true;
   // kunde
-  if (path === "/api/status" || path === "/api/overview" || path === "/api/auth/password" || path === "/api/account") return true;
+  if (path === "/api/status" || path === "/api/overview" || path === "/api/auth/password" || /^\/api\/account(\/|$)/.test(path)) return true;
   if (path === "/api/agents") return method === "GET";
   if (path === "/api/test-chat") return method === "POST";
   const m = path.match(/^\/api\/agents\/[\w-]+(\/[a-z-]+)?$/);

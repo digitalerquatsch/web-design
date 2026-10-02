@@ -134,6 +134,8 @@ export function mountUsers({ root, api, h, getStatus, onChange }) {
         isMe ? null : u.status === "active"
           ? h("button", { type: "button", class: "btn", text: "Sperren", onclick: () => patch(u, { status: "blocked" }, `${u.name} ist gesperrt.`) })
           : h("button", { type: "button", class: "btn primary", text: "Entsperren", onclick: () => patch(u, { status: "active" }, `${u.name} ist wieder aktiv.`) }),
+        u.role === "abo" && u.supportUntil > Date.now() ? h("button", { type: "button", class: "btn primary", text: "Als Support öffnen", onclick: () => act(async () => { await api("POST", "/api/support/start", { userId: u.id }); location.reload(); }) }) : null,
+        u.twofaEnabled && !isMe ? h("button", { type: "button", class: "btn ghost", text: "2FA zurücksetzen", onclick: () => patch(u, { twofaEnabled: false }, `Zwei-Faktor-Anmeldung von ${u.name} ist aus.`) }) : null,
         isMe ? null : h("button", { type: "button", class: "btn ghost", text: "Passwort zurücksetzen", onclick: () => { confirm = { id: u.id, kind: "reset" }; render(); } }),
         isMe ? null : h("button", { type: "button", class: "btn ghost danger", text: "Löschen", onclick: () => { confirm = { id: u.id, kind: "delete" }; render(); } })));
     }

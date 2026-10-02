@@ -6,7 +6,7 @@ export function mountAccount({ root, api, h, icon, getStatus }) {
   const fmtDate = (t) => (t ? new Date(t).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" }) : "");
 
   async function load() {
-    try { data = await api("GET", "/api/account"); } catch (e) { message = { kind: "err", text: e.message }; }
+    try { data = await api("GET", "/api/account"); await loadSupport(); } catch (e) { message = { kind: "err", text: e.message }; }
     render();
   }
   async function go(action) {
@@ -58,6 +58,37 @@ export function mountAccount({ root, api, h, icon, getStatus }) {
       m.url ? h("a", { class: "btn primary big insta", href: m.url, target: "_blank", rel: "noopener" }, icon("chat", 18), `@${m.instagram} auf Instagram schreiben`) : h("p", { class: "hint", text: "Instagram-Name ist noch nicht hinterlegt." }));
   }
 
+  const real = () => !["token", "local"].includes(data.me.id);
+  let tf = null; // { challenge } while a code is expected
+  let support = null;
+  async function loadSupport() { try { support = await api("GET", "/api/account/support"); } catch { support = null; } }
+  const say = (kind, text) => { message = { kind, text }; };
+
+  function twofaCard() {
+    const me = data.me;
+    const body = [];
+    if (me.twofaEnabled) {
+      const pw = h("input", { class: "input", type: "password", placeholder: "Passwort zum Ausschalten", autocomplete: "current-password", "aria-label": "Passwort" });
+      body.push(h("span", { class: "pill s-done", text: "Aktiv" }), h("div", { class: "toolbar" }, pw, h("button", { type: "button", class: "btn ghost", text: "Ausschalten", onclick: async () => { try { await api("POST", "/api/account/2fa/disable", { password: pw.value }); say("ok", "Zwei-Faktor-Anmeldung ist aus."); await load(); } catch (e) { say("err", e.message); render(); } } })));
+    } else if (tf) {
+      const code = h("input", { class: "input", inputmode: "numeric", autocomplete: "one-time-code", placeholder: "6-stelliger Code", "aria-label": "Code", maxlength: "8" });
+      body.push(h("p", { class: "hint", text: "Wir haben dir einen Code per E-Mail geschickt." }), h("div", { class: "toolbar" }, code, h("button", { type: "button", class: "btn primary", text: "Bestätigen", onclick: async () => { try { await api("POST", "/api/account/2fa/confirm", { challenge: tf.challenge, code: code.value }); tf = null; say("ok", "Zwei-Faktor-Anmeldung ist an."); await load(); } catch (e) { say("err", e.message); render(); } } })));
+    } else {
+      body.push(h("div", { class: "toolbar" }, h("span", { class: "pill", text: "Nicht aktiv" }), h("button", { type: "button", class: "btn primary", onclick: async () => { try { tf = await api("POST", "/api/account/2fa/start", {}); message = null; } catch (e) { say("err", e.message); } render(); } }, icon("shield", 16), "Einschalten")));
+    }
+    return h("section", { class: "panel acc-card" }, h("div", { class: "sys-head" }, h("span", { class: "stat-ico" }, icon("lock", 20)), h("h3", { text: "Zwei-Faktor-Anmeldung" })),
+      h("p", { class: "hint", text: "Nach dem Passwort schicken wir dir zusätzlich einen Code per E-Mail. Wer dein Passwort kennt, kommt damit trotzdem nicht in dein Konto. Ein Gerät, dem du vertraust, fragt 30 Tage lang nicht erneut." }), ...body);
+  }
+
+  function supportCard() {
+    const on = support?.until > Date.now();
+    return h("section", { class: "panel acc-card" }, h("div", { class: "sys-head" }, h("span", { class: "stat-ico" }, icon("users", 20)), h("h3", { text: "Support-Zugriff" })),
+      h("p", { class: "hint", text: "Wenn du Hilfe brauchst, kannst du dem Support für 48 Stunden Zugang zu deinem Konto geben. Er sieht dann deine Agenten und Einstellungen und kann dir direkt helfen. Deine Abrechnung bleibt gesperrt, gelöscht werden kann nichts, und jeder Zugriff wird protokolliert. Du kannst die Freigabe jederzeit sofort beenden." }),
+      on ? h("p", { class: "hint", text: `Freigegeben bis ${new Date(support.until).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })}.` }) : null,
+      h("div", { class: "toolbar" }, h("button", { type: "button", class: on ? "btn danger" : "btn primary", text: on ? "Freigabe beenden" : "Support-Zugriff für 48 Stunden erlauben", onclick: async () => { try { await api("POST", "/api/account/support", { on: !on }); } catch (e) { say("err", e.message); } await loadSupport(); render(); } })),
+      support?.log?.length ? h("div", null, h("h4", { text: "Zugriffsprotokoll" }), h("ul", { class: "plain" }, support.log.slice(0, 12).map((l) => h("li", { class: "meta", text: `${new Date(l.at).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })} · ${l.adminName} · ${l.method} ${l.path}` })))) : null);
+  }
+
   function render() {
     if (!data) { root.replaceChildren(message ? h("div", { class: "err-box", text: message.text }) : h("div", { class: "empty", text: "Lade …" })); return; }
     const me = data.me;
@@ -78,6 +109,8 @@ export function mountAccount({ root, api, h, icon, getStatus }) {
       h("div", { class: "acc-grid" },
         isAbo ? billingCard() : null,
         isAbo ? mentoringCard() : null,
+        real() ? twofaCard() : null,
+        real() ? supportCard() : null,
         h("section", { class: "panel acc-card" },
           h("div", { class: "sys-head" }, h("span", { class: "avatar" , text: String(me.name || "?").split(/\s+/).map((x) => x[0]).join("").slice(0, 2).toUpperCase() }), h("div", null, h("h3", { text: me.name }), h("span", { class: "meta", text: me.email }))),
           h("p", { class: "hint", text: `Rolle: ${{ admin: "Admin", team: "Team", abo: "Abo", kunde: "Kunde" }[me.role] || me.role}${me.company ? ` · ${me.company}` : ""}` }), pw),

@@ -13,7 +13,7 @@ const FIELDS = {
   smtpHost: "str", smtpPort: "int", smtpSecure: "bool", smtpUser: "str", smtpPass: "secret", smtpFrom: "str", dailyLimit: "int",
   // subscription
   stripeSecretKey: "secret", stripeWebhookSecret: "secret", planName: "str", planPrice: "int", planSeats: "int",
-  planDailyEmails: "int", planMonthlyAnalyses: "int", planMonthlyChats: "int", termsUrl: "url", privacyUrl: "url", imprintUrl: "url",
+  planDailyEmails: "int", customerLimit: "int", planMonthlyAnalyses: "int", planMonthlyChats: "int", termsUrl: "url", privacyUrl: "url", imprintUrl: "url",
   // phone
   twilioAccountSid: "str", twilioAuthToken: "secret", twilioVoice: "str",
   // projects
@@ -44,6 +44,7 @@ export function fromEnv(env = process.env) {
     planPrice: Number(env.PLAN_PRICE || 30),
     planSeats: Number(env.PLAN_SEATS || 5),
     planDailyEmails: 30,
+    customerLimit: Number(env.CUSTOMER_LIMIT || 5),
     planMonthlyAnalyses: 300,
     planMonthlyChats: 3000,
     termsUrl: env.TERMS_URL || "",

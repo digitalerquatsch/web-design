@@ -785,3 +785,10 @@ button.fnode { cursor: pointer; }
 .ws-refine summary { cursor: pointer; font-weight: 600; }
 .ws-bars { display: flex; align-items: flex-end; gap: 3px; height: 90px; margin: 12px 0; }
 .ws-bars i { flex: 1; background: var(--accent); opacity: .8; border-radius: 3px; min-height: 3px; }
+
+/* Support mode bar, customers */
+.support-bar { position: sticky; top: 0; z-index: 40; display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; padding: 10px 14px; margin: 0 -16px; background: var(--warn); color: #1a1200; font-size: 14px; }
+.support-bar .btn { background: #1a1200; color: var(--warn); border-color: #1a1200; }
+.customer { display: grid; gap: 10px; }
+.customer .toolbar { justify-content: space-between; }
+pre.code { white-space: pre-wrap; word-break: break-all; }

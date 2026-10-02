@@ -334,3 +334,9 @@ Unter **Deine Website** baust du eine öffentliche Seite für deine Agentur, err
 - **Bewertungen:** Namen und Zitate trägst du selbst ein (nur echte Stimmen, mit Einverständnis). Ohne Einträge fehlt der Abschnitt.
 - **Eigene Domain:** Subdomain eintragen (z. B. `www.deine-agentur.de`), beim Domain-Anbieter einen **CNAME** auf die Adresse deines Servers setzen (steht auf der Seite), „Jetzt prüfen“. Danach zeigt die Domain nur die Agentur-Seite, nie die App. Das Zertifikat holt Caddy beim ersten Aufruf automatisch (`on_demand_tls` mit Rückfrage `/api/public/domain-ok`, nur für geprüfte Domains). Voraussetzung: `PUBLIC_URL` ist gesetzt und die Seite ist online.
 - **Seitenaufrufe:** 30-Tage-Zähler pro Tag ohne Cookies und ohne IP-Adressen; Crawler und Aufrufe ohne Browser-Kennung werden nicht gezählt.
+
+## Sicherheit im Konto
+
+- **Zwei-Faktor-Anmeldung (E-Mail-Code):** Unter Konto einschalten (braucht eingerichteten E-Mail-Versand). Nach dem Passwort kommt ein 6-stelliger Code (10 Minuten gültig, 5 Versuche, einmal nutzbar). „Diesem Gerät 30 Tage vertrauen“ setzt ein Cookie; Passwortwechsel oder -reset entfernt alle vertrauten Geräte. Kommt kein Code an, kann ein Admin unter Nutzer „2FA zurücksetzen“, und der `ADMIN_TOKEN` bleibt der Notzugang.
+- **Support-Zugriff:** Abo-Kunden können Admins für 48 Stunden Zugang zu ihrem Bereich geben (Konto → Support-Zugriff). Der Admin öffnet ihn unter Nutzer („Als Support öffnen“), sieht oben eine Leiste und kann helfen, aber nichts löschen und nicht an Abrechnung, Nutzern, System, Website und Passwörtern arbeiten. Jeder Zugriff steht im Protokoll, das der Kunde einsehen kann. Beenden geht sofort, die Freigabe läuft sonst nach 48 Stunden ab.
+- **Kunden:** Die Seite „Kunden“ zeigt Chats, Nachrichten und Anfragen deiner Kunden und legt neue Kunden an, auf Wunsch mit einer Kopie einer fertigen Demo. Die Zahl der Plätze steht unter System (`customerLimit`, Standard 5, oder `CUSTOMER_LIMIT`).

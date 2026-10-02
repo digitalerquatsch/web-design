@@ -12,6 +12,7 @@ import { mountReview } from "./review.js";
 import { mountSystem } from "./system.js";
 import { mountJarvis } from "./jarvis.js";
 import { mountWebsite } from "./website.js";
+import { mountCustomers } from "./customers.js";
 import { mountAccount, mountMentoring } from "./account.js";
 import { TEMPLATES, TONES, GOALS, LEAD_FIELDS, COLORS, fromTemplate, withDefaults, buildPrompt, activePrompt } from "./prompt.js";
 
@@ -1001,6 +1002,7 @@ async function seedProjectsAgent() {
 function alert_(text) { const b = $("banner"); b.replaceChildren(h("p", { text })); b.hidden = false; }
 const agentsView = mountAgents({ root: $("agentsView"), api, h, icon, getStatus: () => status, onNew: newAgent, onEdit: openAgentById, onSeed: seedProjectsAgent });
 
+const customersView = mountCustomers({ root: $("customersView"), api, h, icon, getStatus: () => status });
 const websiteView = mountWebsite({ root: $("websiteView"), api, h, icon });
 const jarvisView = mountJarvis({ root: $("jarvisView"), api, h, icon });
 const systemView = mountSystem({ root: $("systemView"), api, h, icon, onSaved: refreshStatus });
@@ -1014,6 +1016,7 @@ const PAGES = [
   { id: "builder", label: "Editor", icon: "edit", el: "bench" },
   { id: "autopilot", label: "Autopilot", icon: "upload", el: "autopilotView", ctl: autopilotView, staff: true, locked: true },
   { id: "acquisition", label: "Akquise", icon: "send", el: "acquisitionView", ctl: acquisitionView, staff: true, glow: true, locked: true },
+  { id: "customers", label: "Kunden", icon: "users", el: "customersView", ctl: customersView, staff: true },
   { id: "website", label: "Deine Website", icon: "globe", el: "websiteView", ctl: websiteView, staff: true },
   { id: "mentoring", label: "1:1 Mentoring", icon: "spark", el: "mentoringView", ctl: mentoringView, abo: true, glow: true },
   { id: "users", label: "Nutzer", icon: "users", el: "usersView", ctl: usersView, admin: true },
@@ -1056,8 +1059,17 @@ $("navBackdrop").addEventListener("click", closeNav);
 $("logoutTop").addEventListener("click", logout);
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && $("sidenav").classList.contains("open")) closeNav(); });
 
+function renderSupportBar() {
+  const bar = $("supportBar");
+  const sup = status.me?.support;
+  bar.hidden = !sup;
+  if (!sup) return;
+  bar.replaceChildren(h("span", { text: `Support-Modus für ${status.me.name} bis ${new Date(sup.until).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })}. Löschen und Abrechnung sind gesperrt, jeder Zugriff wird protokolliert.` }),
+    h("button", { type: "button", class: "btn", text: "Support beenden", onclick: async () => { try { await api("POST", "/api/support/stop", {}); } finally { location.reload(); } } }));
+}
 async function refreshStatus() {
   try { status = await api("GET", "/api/status"); } catch { return; }
+  renderSupportBar();
   renderNav();
   renderUsage();
 }

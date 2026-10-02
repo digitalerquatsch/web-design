@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,6 +12,7 @@ import { fromEnv, loadSystem, maskedSystem, applySystemUpdate, SystemError, bill
 import { createStripe, verifyWebhook, BillingError, ACTIVE_BILLING } from "./billing.js";
 import { validTwilioRequest, speakable, phoneGreeting, twiml } from "./voice.js";
 import { sanitizeIntegrations, maskAgent, maskIntegrations, dispatch, deliver, ready as integrationReady, IntegrationError, TYPES as INTEGRATION_TYPES } from "./integrations.js";
+import { newCode, hashCode } from "./twofa.js";
 import dnsPromises from "node:dns/promises";
 import { normalizeDomain, sanitizeSite, readiness, legalDrafts, renderSite, renderLegal, decodeImage, SiteError, PAGE_HEADERS, NICHES, COUNTRIES } from "./site.js";
 import { newToken, hashToken, sanitizeSnapshot, STALE_MS } from "./jarvis.js";
@@ -399,23 +401,64 @@ export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl 
 
   // Who is calling? A session user, the ADMIN_TOKEN, or, before the first
   // account exists, a request addressed to localhost.
+  // Support mode: an admin acts inside a customer's workspace, only while that customer's grant runs.
+  async function withSupport(u, req) {
+    const sess = await auth.sessionForToken(sessionToken(req));
+    if (!sess?.supportFor) return u;
+    const target = u.role === "admin" ? await store.get("users", sess.supportFor) : null;
+    if (target && target.status === "active" && target.supportUntil > Date.now()) return { ...target, support: { adminId: u.id, adminName: u.name, until: target.supportUntil } };
+    await auth.setSessionSupport(sessionToken(req), null);
+    return u;
+  }
+
   async function currentUser(req) {
     if (tokenOk(req)) return TOKEN_ADMIN;
     const u = await auth.userForToken(sessionToken(req));
-    if (u) return u;
+    if (u) return withSupport(u, req);
     if (!adminToken && isLoopback(req) && (await auth.count()) === 0) return LOCAL_ADMIN;
     return null;
   }
 
-  async function startSession(res, req, user) {
+  async function startSession(res, req, user, extraCookies = []) {
     const token = await auth.startSession(user);
-    res.setHeader("set-cookie", auth.cookie(token, { secure: secureCookie(req) }));
+    res.setHeader("set-cookie", [auth.cookie(token, { secure: secureCookie(req) }), ...extraCookies]);
   }
+
+  // Two-step login: a 6-digit code by e-mail; a device that passed it stays trusted for 30 days.
+  const TD_COOKIE = "aw_td", TD_DAYS = 30;
+  const shaHex = (t) => crypto.createHash("sha256").update(String(t)).digest("hex");
+  const tdCookie = (req, token, clear = false) => `${TD_COOKIE}=${clear ? "" : token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${clear ? 0 : TD_DAYS * 86400}${secureCookie(req) ? "; Secure" : ""}`;
+  async function trustedDevice(req, userId) {
+    const t = parseCookies(req.headers.cookie)[TD_COOKIE];
+    const row = t ? await store.get("trusted", shaHex(t)) : null;
+    return Boolean(row && row.userId === userId && row.until > Date.now());
+  }
+  async function issueChallenge(user, purpose) {
+    if (!mailer) throw new HttpError(503, "Der E-Mail-Versand ist noch nicht eingerichtet, der Code kann nicht gesendet werden.");
+    const token = crypto.randomBytes(24).toString("base64url");
+    const code = newCode();
+    try { await mailer.send({ to: user.email, subject: "Dein Code für Agentenwerk", text: `Dein Code: ${code}\n\nEr gilt 10 Minuten. Wenn du ihn nicht angefordert hast, ändere bitte dein Passwort.` }); }
+    catch { throw new HttpError(503, "Der Code konnte nicht gesendet werden. Bitte später noch einmal versuchen."); }
+    await store.put("challenges", { id: shaHex(token), userId: user.id, purpose, codeHash: hashCode(shaHex(token), code), expiresAt: Date.now() + 10 * 60_000, attempts: 0 });
+    return token;
+  }
+  async function checkChallenge(token, code, purpose) {
+    const id = shaHex(token || "");
+    const row = await store.get("challenges", id);
+    if (!row || row.purpose !== purpose || row.expiresAt < Date.now()) throw new HttpError(400, "Der Code ist abgelaufen. Bitte neu anfordern.");
+    row.attempts++;
+    if (row.attempts > 5) { await store.remove("challenges", (x) => x.id === id); throw new HttpError(429, "Zu viele Versuche. Bitte neu anmelden."); }
+    if (!safeEqual(hashCode(id, String(code || "").replace(/\s/g, "")), row.codeHash)) { await store.put("challenges", row); throw new HttpError(401, "Der Code stimmt nicht."); }
+    await store.remove("challenges", (x) => x.id === id);
+    return row.userId;
+  }
+  const forgetDevices = (userId) => store.remove("trusted", (x) => x.userId === userId);
 
   async function authRoute(req, res, p) {
     if (p === "/api/auth/state" && req.method === "GET") {
       const count = await auth.count();
-      const user = await auth.userForToken(sessionToken(req));
+      const raw = await auth.userForToken(sessionToken(req));
+      const user = raw && (await withSupport(raw, req));
       return send(res, 200, {
         setupNeeded: count === 0,
         setupNeedsToken: count === 0 && !isLoopback(req),
@@ -438,7 +481,25 @@ export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl 
       const ip = clientIp(req);
       if (!loginLimit.allow(ip) || !loginLimit.allow("mail:" + normEmail(body.email))) throw new HttpError(429, "Zu viele Anmeldeversuche. Bitte 15 Minuten warten.");
       const user = await auth.login(body.email, body.password);
+      if (user.twofaEnabled && !(await trustedDevice(req, user.id))) {
+        return send(res, 200, { twofa: true, challenge: await issueChallenge(user, "login"), email: user.email.replace(/^(.).*(@.*)$/, "$1***$2") });
+      }
       await startSession(res, req, user);
+      return send(res, 200, { user: publicUser(user) });
+    }
+    if (p === "/api/auth/2fa" && req.method === "POST") {
+      const body = await readJson(req, 5_000);
+      if (!loginLimit.allow("2fa:" + clientIp(req))) throw new HttpError(429, "Zu viele Versuche. Bitte 15 Minuten warten.");
+      const userId = await checkChallenge(body.challenge, body.code, "login");
+      const user = await store.get("users", userId);
+      if (!user || user.status !== "active") throw new HttpError(403, "Dieser Zugang ist nicht aktiv.");
+      const cookies = [];
+      if (body.trust === true) {
+        const t = crypto.randomBytes(32).toString("base64url");
+        await store.put("trusted", { id: shaHex(t), userId: user.id, until: Date.now() + TD_DAYS * 86_400_000 });
+        cookies.push(tdCookie(req, t));
+      }
+      await startSession(res, req, user, cookies);
       return send(res, 200, { user: publicUser(user) });
     }
     if (p === "/api/auth/logout" && req.method === "POST") {
@@ -492,6 +553,7 @@ export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl 
       if (typeof body.name === "string" && body.name.trim()) user.name = body.name.trim().slice(0, 120);
       if (typeof body.company === "string") user.company = body.company.trim().slice(0, 120);
       if (typeof body.autopilotUnlocked === "boolean") user.autopilotUnlocked = body.autopilotUnlocked;
+      if (body.twofaEnabled === false && user.twofaEnabled) { user.twofaEnabled = false; await forgetDevices(user.id); }
       if (Array.isArray(body.agentIds)) {
         const agentIds = new Set((await store.list("agents")).map((a) => a.id));
         user.agentIds = body.agentIds.filter((x) => typeof x === "string" && agentIds.has(x)).slice(0, 200);
@@ -514,6 +576,7 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
       user.passwordHash = hashPassword(password);
       await store.put("users", user);
       await auth.endAllSessions(user.id);
+      await forgetDevices(user.id);
       return send(res, 200, { password });
     }
     if (!sub && req.method === "DELETE") {
@@ -544,6 +607,15 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
       throw new HttpError(403, "Ohne ADMIN_TOKEN ist der Builder vor dem ersten Konto nur über localhost erreichbar.");
     }
     if (!allowed(me, req.method, p)) throw new HttpError(403, "Dafür hat dein Zugang keine Berechtigung.");
+    if (me.support && !/^\/api\/support\/stop$/.test(p)) {
+      // Support sees and helps, but cannot delete, bill, or touch accounts and credentials.
+      if (req.method === "DELETE" || /^\/api\/(billing|account|users|system|jarvis|site|customers|auth\/password|auth\/config|agents\/bulk-delete)/.test(p)) throw new HttpError(403, "Im Support-Zugriff ist das gesperrt.");
+      if (p !== "/api/status") {
+        await store.put("audit", { id: newId(), at: Date.now(), adminId: me.support.adminId, adminName: me.support.adminName, userId: me.id, method: req.method, path: p });
+        const n = (await store.list("audit")).length;
+        if (n > 3000) { const rows = (await store.list("audit")).sort((a, b) => a.at - b.at).slice(0, n - 2000).map((r) => r.id); const gone = new Set(rows); await store.remove("audit", (r) => gone.has(r.id)); }
+      }
+    }
     const ws = workspaceOf(me);
     // A subscription that is not paid (yet) only reaches status, account and billing.
     if (me.role === "abo" && me.billing && !ACTIVE_BILLING.has(me.billing.status) && !/^\/api\/(status|account|billing|auth\/password)/.test(p)) {
@@ -567,6 +639,61 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
         plan: { name: sys.planName, price: sys.planPrice },
       });
     }
+    const real = !["token", "local"].includes(me.id) && !me.support;
+    if (p === "/api/account/2fa/start" && req.method === "POST") {
+      if (!real) throw new HttpError(400, "Für diesen Zugang gibt es keine Zwei-Faktor-Anmeldung.");
+      const user = await store.get("users", me.id);
+      if (!mailer) throw new HttpError(503, "Der E-Mail-Versand ist noch nicht eingerichtet. Ohne ihn können keine Codes gesendet werden.");
+      return send(res, 200, { challenge: await issueChallenge(user, "enable") });
+    }
+    if (p === "/api/account/2fa/confirm" && req.method === "POST") {
+      if (!real) throw new HttpError(400, "Für diesen Zugang gibt es keine Zwei-Faktor-Anmeldung.");
+      const body = await readJson(req, 5_000);
+      const userId = await checkChallenge(body.challenge, body.code, "enable");
+      const user = await store.get("users", userId);
+      if (!user || user.id !== me.id) throw new HttpError(403, "Kein Zugriff.");
+      user.twofaEnabled = true;
+      await store.put("users", user);
+      return send(res, 200, { ok: true });
+    }
+    if (p === "/api/account/2fa/disable" && req.method === "POST") {
+      if (!real) throw new HttpError(400, "Für diesen Zugang gibt es keine Zwei-Faktor-Anmeldung.");
+      const body = await readJson(req, 5_000);
+      const user = await store.get("users", me.id);
+      if (!verifyPassword(String(body.password || ""), user.passwordHash)) throw new HttpError(401, "Das Passwort stimmt nicht.");
+      user.twofaEnabled = false;
+      await store.put("users", user);
+      await forgetDevices(user.id);
+      return send(res, 200, { ok: true });
+    }
+    if (p === "/api/account/support" && req.method === "GET") {
+      if (!real) throw new HttpError(400, "Nur für eigene Konten.");
+      const until = (await store.get("users", me.id)).supportUntil || 0;
+      const log = (await store.list("audit", (r) => r.userId === me.id)).sort((a, b) => b.at - a.at).slice(0, 30).map(({ at, adminName, method, path }) => ({ at, adminName, method, path }));
+      return send(res, 200, { until: until > Date.now() ? until : 0, log });
+    }
+    if (p === "/api/account/support" && req.method === "POST") {
+      if (!real) throw new HttpError(400, "Nur für eigene Konten.");
+      const body = await readJson(req, 1_000);
+      const user = await store.get("users", me.id);
+      user.supportUntil = body.on === true ? Date.now() + 48 * 3_600_000 : 0;
+      await store.put("users", user);
+      if (!body.on) await auth.clearSupport(user.id);
+      return send(res, 200, { until: user.supportUntil });
+    }
+    if (p === "/api/support/start" && req.method === "POST") {
+      if (me.role !== "admin" || me.support || !real) throw new HttpError(403, "Nur Admins mit eigenem Konto.");
+      const body = await readJson(req, 1_000);
+      const target = await store.get("users", String(body.userId || ""));
+      if (!target || target.role !== "abo" || !(target.supportUntil > Date.now())) throw new HttpError(403, "Diese Person hat keinen Support-Zugriff freigegeben.");
+      await auth.setSessionSupport(sessionToken(req), target.id);
+      return send(res, 200, { ok: true });
+    }
+    if (p === "/api/support/stop" && req.method === "POST") {
+      await auth.setSessionSupport(sessionToken(req), null);
+      return send(res, 200, { ok: true });
+    }
+    if (p === "/api/customers" || p.startsWith("/api/customers/")) return customersRoute(req, res, p, me, ws);
     if (p === "/api/site" && req.method === "GET") return send(res, 200, await siteView(await store.get("site", ws), req, ws));
     if (p === "/api/site" && req.method === "PUT") {
       const body = await readJson(req, 1_500_000);
@@ -648,6 +775,7 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
       me.passwordHash = hashPassword(body.next);
       await store.put("users", me);
       await auth.endAllSessions(me.id);
+      await forgetDevices(me.id);
       await startSession(res, req, me);
       return send(res, 200, { ok: true });
     }
@@ -892,6 +1020,65 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
     const html = kind ? renderLegal(site, kind, base) : renderSite(site, { agent: agent && inWorkspace(agent, site.id) ? agent : null, base });
     res.writeHead(200, PAGE_HEADERS);
     res.end(req.method === "HEAD" ? undefined : html);
+  }
+
+  async function customersRoute(req, res, p, me, ws) {
+    const mine = async () => (await store.list("users", (u) => u.role === "kunde" && (u.ownerId || "main") === ws)).sort((a, b) => b.createdAt - a.createdAt);
+    const limit = Math.max(0, sys.customerLimit ?? 5);
+    if (p === "/api/customers" && req.method === "GET") {
+      const customers = await mine();
+      const ids = new Set(customers.flatMap((c) => c.agentIds || []));
+      const agents = await store.list("agents", (a) => ids.has(a.id) && inWorkspace(a, ws));
+      const convs = await store.list("conversations", (c) => ids.has(c.agentId) && !c.test);
+      const captured = await store.list("captured", (c) => ids.has(c.agentId) && !c.test);
+      const per = (id) => ({ chats: convs.filter((c) => c.agentId === id).length, requests: captured.filter((c) => c.agentId === id).length });
+      return send(res, 200, {
+        limit, used: customers.length,
+        totals: { chats: convs.length, messages: convs.reduce((n, c) => n + (c.messages?.length || 0), 0), requests: captured.length },
+        customers: customers.map((c) => ({ id: c.id, name: c.name, email: c.email, company: c.company, lastLoginAt: c.lastLoginAt, createdAt: c.createdAt, agents: (c.agentIds || []).map((id) => agents.find((a) => a.id === id)).filter(Boolean).map((a) => ({ id: a.id, name: a.name, company: a.company, ...per(a.id) })) })),
+        agents: (await store.list("agents", (a) => inWorkspace(a, ws))).map((a) => ({ id: a.id, name: a.name, company: a.company, demo: Boolean(a.batchId) })),
+      });
+    }
+    if (p === "/api/customers" && req.method === "POST") {
+      const body = await readJson(req, 5_000);
+      if ((await mine()).length >= limit) throw new HttpError(409, `Alle ${limit} Kundenplätze sind belegt.`);
+      let source = null;
+      if (body.agentId) { source = await store.get("agents", String(body.agentId)); if (!source || !inWorkspace(source, ws)) throw new HttpError(404, "Agent nicht gefunden."); }
+      const password = temporaryPassword();
+      let user;
+      try { user = await auth.create({ name: body.name, email: body.email, company: body.company, role: "kunde", status: "active", password, extra: { ownerId: ws } }); }
+      catch (e) { if (e instanceof AuthError) throw new HttpError(e.status, e.message); throw e; }
+      let agentId = null;
+      if (source) {
+        agentId = source.id;
+        if (body.copy !== false) {
+          const copy = { ...source, id: newId(), batchId: undefined, preview: undefined, prospect: undefined, createdAt: Date.now(), updatedAt: Date.now() };
+          await store.put("agents", copy);
+          agentId = copy.id;
+        }
+        user.agentIds = [agentId];
+        await store.put("users", user);
+      }
+      return send(res, 201, { user: publicUser(user), password, agentId });
+    }
+    const m = p.match(/^\/api\/customers\/([\w-]+)(\/reset-password)?$/);
+    const user = m && (await mine()).find((u) => u.id === m[1]);
+    if (!user) throw new HttpError(404, "Kunde nicht gefunden.");
+    if (m[2] && req.method === "POST") {
+      const password = temporaryPassword();
+      user.passwordHash = hashPassword(password);
+      await store.put("users", user);
+      await auth.endAllSessions(user.id);
+      await forgetDevices(user.id);
+      return send(res, 200, { password });
+    }
+    if (!m[2] && req.method === "DELETE") {
+      await auth.endAllSessions(user.id);
+      await forgetDevices(user.id);
+      await store.remove("users", (u) => u.id === user.id);
+      return send(res, 204, "");
+    }
+    throw new HttpError(404, "Nicht gefunden.");
   }
 
   async function siteRoute(req, res, url) {

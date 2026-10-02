@@ -12,6 +12,7 @@ export async function renderAuth({ root, h, message = "", onSuccess, onToken }) 
   }
   let mode = state.setupNeeded ? "setup" : "login";
   let info = message;
+  let twofa = null; // { challenge, email } between password and code
 
   async function post(path, body, extraHeaders = {}) {
     const r = await fetch(path, { method: "POST", headers: { "content-type": "application/json", "x-agentenwerk": "1", ...extraHeaders }, body: JSON.stringify(body) });
@@ -101,12 +102,21 @@ export async function renderAuth({ root, h, message = "", onSuccess, onToken }) 
       card = form("Mit Admin-Token anmelden", "Für Notfälle und Automationen: der ADMIN_TOKEN aus der .env.", [
         field("tk_token", "ADMIN_TOKEN", "password", { autocomplete: "off" }),
       ], "Anmelden", async () => { onToken(val("tk_token")); }, [link("Zurück zur Anmeldung", "login")]);
+    } else if (mode === "twofa" && twofa) {
+      card = form("Code eingeben", `Wir haben einen 6-stelligen Code an ${twofa.email} geschickt. Er gilt 10 Minuten.`, [
+        field("tf_code", "Code", "text", { inputmode: "numeric", autocomplete: "one-time-code", maxlength: "8", pattern: "[0-9 ]{6,8}" }),
+        h("label", { class: "check", for: "tf_trust" }, h("input", { type: "checkbox", id: "tf_trust" }), h("span", { text: "Diesem Gerät 30 Tage vertrauen" })),
+      ], "Bestätigen", async () => {
+        await post("/api/auth/2fa", { challenge: twofa.challenge, code: val("tf_code"), trust: document.getElementById("tf_trust").checked });
+        onSuccess();
+      }, [link("Zurück zur Anmeldung", "login")]);
     } else {
       card = form("Anmelden", null, [
         field("li_email", "E-Mail", "email", { autocomplete: "username" }),
         field("li_pw", "Passwort", "password", { autocomplete: "current-password" }),
       ], "Anmelden", async () => {
-        await post("/api/auth/login", { email: val("li_email"), password: val("li_pw") });
+        const r = await post("/api/auth/login", { email: val("li_email"), password: val("li_pw") });
+        if (r.twofa) { twofa = { challenge: r.challenge, email: r.email }; mode = "twofa"; info = ""; render(); return; }
         onSuccess();
       }, [state.signupOpen ? link(state.plan?.enabled ? `Jetzt registrieren · ${state.plan.price} € / Monat` : "Zugang beantragen", "register") : null, state.tokenLogin ? link("Mit Admin-Token", "token") : null].filter(Boolean));
     }
