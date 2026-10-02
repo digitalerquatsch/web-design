@@ -13,6 +13,7 @@ import { mountSystem } from "./system.js";
 import { mountJarvis } from "./jarvis.js";
 import { mountWebsite } from "./website.js";
 import { mountCustomers } from "./customers.js";
+import { brandIcon, brandKey, BRANDS } from "./brands.js";
 import { mountAccount, mountMentoring } from "./account.js";
 import { TEMPLATES, TONES, GOALS, LEAD_FIELDS, COLORS, fromTemplate, withDefaults, buildPrompt, activePrompt } from "./prompt.js";
 
@@ -727,7 +728,7 @@ const BUILDERS = {
   flow(f) {
     const INT = { email: ["E-Mail", "mail"], webhook: ["Webhook", "link"], slack: ["Slack", "chat"], discord: ["Discord", "chat"], telegram: ["Telegram", "send"] };
     const node = (ic, title, sub, opts = {}) => h(opts.onclick ? "button" : "div", { type: opts.onclick ? "button" : null, class: "fnode" + (opts.on ? " on" : "") + (opts.off ? " off" : "") + (opts.active ? " active" : ""), onclick: opts.onclick },
-      h("span", { class: "fnode-ic" }, icon(ic, 22)), h("strong", { text: title }), h("span", { class: "meta", text: sub }));
+      h("span", { class: "fnode-ic" + (opts.brand ? " brand" : "") }, opts.brand ? brandIcon(h, opts.brand, 38) : icon(ic, 22)), h("strong", { text: title }), h("span", { class: "meta", text: sub }));
     const rerender = () => renderForm();
     const sel = cfg.integrations.find((i) => i.id === flowSelected);
     const triggers = [node("chat", "Chat-Widget", "Website", { on: true })];
@@ -736,7 +737,7 @@ const BUILDERS = {
     const outs = [
       node("book", "Wissen", `${sources} Quellen`, { onclick: () => go("wissen"), on: sources > 0 }),
       node("phone", "Telefon", cfg.phoneEnabled ? "aktiv" : "aus", { onclick: () => go("phone"), off: !cfg.phoneEnabled }),
-      ...cfg.integrations.map((i) => node(INT[i.type][1], i.label || INT[i.type][0], i.enabled ? (integrationReady(i) ? "verbunden" : "unvollständig") : "pausiert", { onclick: () => { flowSelected = i.id; flowAdding = false; rerender(); }, active: i.id === flowSelected, off: !i.enabled, on: i.enabled && integrationReady(i) })),
+      ...cfg.integrations.map((i) => node(INT[i.type][1], i.label || INT[i.type][0], i.enabled ? (integrationReady(i) ? "verbunden" : "unvollständig") : "pausiert", { brand: brandKey(i), onclick: () => { flowSelected = i.id; flowAdding = false; rerender(); }, active: i.id === flowSelected, off: !i.enabled, on: i.enabled && integrationReady(i) })),
       h("button", { type: "button", class: "fnode add", onclick: () => { flowAdding = !flowAdding; rerender(); } }, h("span", { class: "fnode-ic" }, icon("plus", 22)), h("strong", { text: "Verbindung" }), h("span", { class: "meta", text: "hinzufügen" })),
     ];
     f.append(h("div", { class: "flow" },
@@ -745,11 +746,11 @@ const BUILDERS = {
       h("div", { class: "flow-line" }), h("div", { class: "flow-row wrap" }, outs)));
     if (flowAdding) {
       f.append(field("Neue Verbindung", "Was soll bei einem neuen Kontakt oder einer Terminanfrage passieren?", h("div", { class: "chips" }, Object.entries(INT).map(([type, [label]]) =>
-        h("button", { type: "button", class: "chip", text: label, onclick: () => {
+        h("button", { type: "button", class: "chip brand-chip", onclick: () => {
           const id = (crypto.randomUUID?.() || String(Date.now())).replace(/-/g, "").slice(0, 12);
           cfg.integrations.push({ id, type, enabled: true, label: "", events: ["lead", "termin"], to: "", chatId: "", url: "", secret: "", token: "", tool: { on: false, description: "", returnResponse: false, fields: [] }, has: {}, hint: {} });
           flowSelected = id; flowAdding = false; changed({ rerender: true });
-        } })))));
+        } }, brandIcon(h, type, 22), label)))));
     }
     if (!sel) { f.append(h("p", { class: "hint", text: cfg.integrations.length ? "Wähle eine Verbindung, um sie einzurichten." : "Noch keine Verbindung. Lege eine an, damit dich neue Kontakte sofort erreichen." })); return; }
     const sv = (k, label, ph, hint, type = "text") => {
@@ -766,13 +767,13 @@ const BUILDERS = {
     }
     if (sel.type === "webhook") {
       sel.tool ||= { on: false, description: "", returnResponse: false, fields: [] };
-      const BRANDS = ["Gmail", "Google Kalender", "Google Sheets", "WhatsApp", "Telegram", "HubSpot", "Notion", "Zapier", "Make", "n8n"];
+      const CHIPS = ["gmail", "kalender", "sheets", "whatsapp", "telegram", "hubspot", "notion", "zapier", "make", "n8n"];
       const TEMPLATES = {
         "Termin prüfen oder buchen": [["datum", "Wunschdatum"], ["uhrzeit", "Wunschuhrzeit"], ["name", "Name des Kunden"], ["email", "E-Mail-Adresse des Kunden"], ["leistung", "Gewünschte Leistung"]],
         "Kontakt anlegen": [["vorname", "Vorname des Kunden"], ["nachname", "Nachname des Kunden"], ["email", "E-Mail-Adresse des Kunden"], ["telefon", "Telefonnummer des Kunden"]],
         "Nachricht senden": [["text", "Inhalt der Nachricht"]],
       };
-      fields.push(h("div", { class: "field" }, h("span", { class: "lbl", text: "Integration" }), h("div", { class: "chips" }, BRANDS.map((b) => h("button", { type: "button", class: "chip", "aria-pressed": String(sel.label === b), text: b, onclick: () => { sel.label = sel.label === b ? "" : b; changed({ rerender: true, prompt: false }); } })))));
+      fields.push(h("div", { class: "field" }, h("span", { class: "lbl", text: "Integration" }), h("div", { class: "chips" }, CHIPS.map((k) => { const b = BRANDS[k].label; return h("button", { type: "button", class: "chip brand-chip", "aria-pressed": String(sel.label === b), onclick: () => { sel.label = sel.label === b ? "" : b; changed({ rerender: true, prompt: false }); } }, brandIcon(h, k, 20), b); }))));
       fields.push(field("Name (wird im Ablauf angezeigt)", null, h("input", { class: "input", value: sel.label || "", placeholder: "z. B. Gmail", oninput: (e) => { sel.label = e.target.value; changed({ prompt: false }); }, onchange: settle })));
       fields.push(sv("url", "Webhook-URL (https)", "https://hook.eu.make.com/…", "Make, Zapier oder n8n geben dir so eine Adresse. Von dort geht es weiter zu Google Kalender, Sheets, HubSpot und mehr."));
       fields.push(toggleOf(sel.tool, "on", "Der Agent darf diesen Webhook im Gespräch selbst aufrufen"));

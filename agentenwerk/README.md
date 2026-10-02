@@ -345,3 +345,7 @@ Unter **Deine Website** baust du eine öffentliche Seite für deine Agentur, err
 
 - **Aus Beschreibung:** Im Editor unter Grundlagen beschreibst du den Agenten in ein, zwei Sätzen, die KI richtet Ton, Ziel, Fragen und Begrüßung ein. Was du nicht genannt hast, steht unter „Noch nicht beschrieben“. Zählt wie eine Analyse im Kontingent.
 - **Webhook als Werkzeug:** Unter Verbindungen kann ein Webhook vom Agenten im Gespräch selbst aufgerufen werden (zum Beispiel Kalender prüfen über Make). Du legst Felder fest, die der Agent aus dem Gespräch füllt, oder feste Werte, die er nicht ändern kann. Mit „Antwort zurück in den KI-Kontext geben“ sieht der Agent die Antwort (höchstens 2000 Zeichen, als Daten markiert, nicht als Anweisung). Im Testchat wird der Webhook nicht aufgerufen. Fällt der Dienst aus, sagt der Agent das offen und der Chat läuft weiter.
+
+### Logos bei Integrationen
+
+Verbindungen zeigen Symbole in den Markenfarben (Gmail, Google Kalender, Sheets, WhatsApp, Telegram, Slack, Discord, HubSpot, Notion, Zapier, Make, n8n, E-Mail, Webhook), im Ablauf, bei der Auswahl und auf den Agentenkarten. Das sind selbst gezeichnete, vereinfachte Symbole ohne externe Anfragen. Original-Logos legst du als SVG in `public/logos/` (z. B. `gmail.svg`); sie ersetzen dann das Symbol. Beachte dabei die Nutzungsregeln der Marken.

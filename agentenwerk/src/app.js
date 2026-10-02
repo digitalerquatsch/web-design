@@ -1464,7 +1464,8 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
     let data;
     try { data = await fs.readFile(file); } catch { throw new HttpError(404, "Nicht gefunden."); }
     const headers = { "content-type": TYPES[path.extname(file)] || "application/octet-stream", "x-content-type-options": "nosniff" };
-    if (rel === "widget.js") Object.assign(headers, { "access-control-allow-origin": "*", "cache-control": "public, max-age=300" });
+    if (path.extname(file) === ".svg") Object.assign(headers, { "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox", "cache-control": "public, max-age=300" });
+    else if (rel === "widget.js") Object.assign(headers, { "access-control-allow-origin": "*", "cache-control": "public, max-age=300" });
     // The demo page may be framed by the builder itself (review mode), nobody else.
     else if (rel === "preview.html") Object.assign(headers, { "cache-control": "no-cache", "x-frame-options": "SAMEORIGIN", "content-security-policy": "frame-ancestors 'self'", "referrer-policy": "same-origin" });
     else Object.assign(headers, { "cache-control": "no-cache", "x-frame-options": "DENY", "referrer-policy": "same-origin" });

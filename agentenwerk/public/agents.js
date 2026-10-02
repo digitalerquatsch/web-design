@@ -20,6 +20,7 @@ export function modelLabel(status) {
   return nice.replace(/\b(\w)/g, (c) => c.toUpperCase()) || "KI";
 }
 
+import { brandIcon, brandKey } from "./brands.js";
 const INT_ICON = { email: "mail", webhook: "link", slack: "chat", discord: "chat", telegram: "send" };
 
 export function agentCard({ h, icon, a, status, onEdit, select = null, onMenu = null }) {
@@ -36,7 +37,7 @@ export function agentCard({ h, icon, a, status, onEdit, select = null, onMenu = 
       h("div", { class: "ints-row" },
         h("span", { class: "int-ic" + (known ? " on" : ""), title: `Wissen: ${known} Einträge` }, icon("book", 16)),
         a.phoneEnabled ? h("span", { class: "int-ic on", title: "Telefon aktiv" }, icon("phone", 16)) : null,
-        ints.length ? ints.map((i) => h("span", { class: "int-ic on", title: i.type }, icon(INT_ICON[i.type] || "link", 16))) : h("span", { class: "meta", text: "Keine Verbindungen" }))),
+        ints.length ? ints.map((i) => h("span", { class: "int-ic brand", title: i.label || i.type }, brandIcon(h, brandKey(i), 30))) : h("span", { class: "meta", text: "Keine Verbindungen" }))),
     h("div", { class: "agent-card-body" },
       h("h3", { text: a.name || "Ohne Namen" }),
       h("p", { class: "agent-sub", text: a.company || "Ohne Firma" }),

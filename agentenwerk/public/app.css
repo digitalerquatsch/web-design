@@ -795,3 +795,11 @@ pre.code { white-space: pre-wrap; word-break: break-all; }
 
 .ws-field-row { display: grid; grid-template-columns: 1fr; gap: 6px; padding: 10px; border: 1px solid var(--line); border-radius: 12px; }
 @media (min-width: 720px) { .ws-field-row { grid-template-columns: 1fr 1.4fr 1fr auto; align-items: center; } }
+
+/* Brand symbols */
+.brand-ic { display: inline-grid; place-items: center; border-radius: 22%; overflow: hidden; flex: none; vertical-align: middle; }
+.brand-ic img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.brand-ic svg { display: block; }
+.chip.brand-chip { display: inline-flex; align-items: center; gap: 8px; }
+.fnode-ic.brand { background: transparent; width: auto; height: auto; }
+.int-ic.brand { border: 0; background: transparent; width: auto; height: auto; }

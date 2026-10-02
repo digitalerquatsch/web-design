@@ -140,3 +140,18 @@ test("reviews, text overrides, custom domain with CNAME check, domain-ok, views"
   assert.equal(r.body.domain, "");
   server.close(); await fs.rm(dir, { recursive: true, force: true });
 });
+
+test("operator SVG logos are served sandboxed", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "agentenwerk-logo-"));
+  const server = http.createServer(createApp({ dataDir: dir, ai: { configured: true, provider: "mistral", model: "f", isApiError: () => false } }));
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const base = `http://localhost:${server.address().port}`;
+  await fs.writeFile(new URL("../public/logos/_test.svg", import.meta.url), '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"></svg>');
+  try {
+    const res = await fetch(`${base}/logos/_test.svg`);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("content-type"), "image/svg+xml");
+    assert.match(res.headers.get("content-security-policy"), /sandbox/);
+    assert.equal((await fetch(`${base}/logos/gibtsnicht.svg`)).status, 404, "missing logo falls back to the drawn symbol");
+  } finally { await fs.rm(new URL("../public/logos/_test.svg", import.meta.url), { force: true }); server.close(); await fs.rm(dir, { recursive: true, force: true }); }
+});
