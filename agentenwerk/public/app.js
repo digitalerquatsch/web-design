@@ -8,6 +8,7 @@ import { renderAuth } from "./auth.js";
 import { mountHome } from "./home.js";
 import { mountAgents } from "./agents.js";
 import { icon } from "./icons.js";
+import { mountReview } from "./review.js";
 import { TEMPLATES, TONES, GOALS, LEAD_FIELDS, COLORS, fromTemplate, withDefaults, buildPrompt, activePrompt } from "./prompt.js";
 
 /* ---------- helpers ---------- */
@@ -498,6 +499,10 @@ const BUILDERS = {
     f.append(h("div", { class: "row2" },
       field("Kürzel im Avatar", "Zwei Buchstaben.", ini, "initials"),
       field("Position auf der Seite", null, seg("position", [["right", "Unten rechts"], ["left", "Unten links"]]))));
+    f.append(h("div", { class: "row2" },
+      field("Chat-Titel", "Steht im Kopf des Chats, z. B. „Fragen zum Führerschein?“", (() => { const i = inputField("widgetTitle", "Name · Firma"); i.maxLength = 40; return i; })(), "widgetTitle"),
+      field("Darstellung", null, seg("widgetTheme", [["light", "Hell"], ["dark", "Dunkel"]]))));
+    f.append(field("Logo (Bild-Adresse)", "Wird beim Einlesen der Website gesucht. Leer lassen zeigt das Kürzel.", inputField("logoUrl", "https://firma.de/logo.png", "url"), "logoUrl"));
     const w = textField("welcome", "Hallo! Wie kann ich helfen?", 2);
     w.addEventListener("input", () => { if (!started) resetChat(); });
     f.append(field("Begrüßung", "Die erste Nachricht, die Besucher sehen.", w, "welcome"));
@@ -603,7 +608,7 @@ function applyWidgetLook() {
   const w = $("widget");
   w.style.setProperty("--w", cfg.color);
   w.style.setProperty("--w-ink", inkFor(cfg.color));
-  $("wName").textContent = (cfg.name || "Agent") + (cfg.company ? ` · ${cfg.company}` : "");
+  $("wName").textContent = cfg.widgetTitle || (cfg.name || "Agent") + (cfg.company ? ` · ${cfg.company}` : "");
   $("wAv").textContent = (cfg.initials || cfg.name.slice(0, 2) || "A").toUpperCase();
   $("wFoot").textContent = `Testmodus · Widget ${cfg.position === "left" ? "unten links" : "unten rechts"}`;
 }
@@ -719,8 +724,15 @@ async function openAgentById(id) {
   const a = agents.find((x) => x.id === id);
   if (a) { showView("builder"); section = "basis"; loadAgent(a); }
 }
-const autopilotView = mountAutopilot({ root: $("autopilotView"), api, h, headers, getStatus: () => status, openAgent: openAgentById });
-const acquisitionView = mountAcquisition({ root: $("acquisitionView"), api, h, getStatus: () => status, openAgent: openAgentById });
+const reviewView = mountReview({ root: $("reviewView"), api, h, icon, getStatus: () => status, onExit: () => showView(reviewReturn), openAgent: openAgentById });
+let reviewReturn = "acquisition";
+async function startReview({ leadIds, start = 0, label, from = "acquisition" }) {
+  reviewReturn = from;
+  showView("review");
+  await reviewView.open({ leadIds, start, label });
+}
+const autopilotView = mountAutopilot({ root: $("autopilotView"), api, h, headers, getStatus: () => status, openAgent: openAgentById, onReview: (o) => startReview({ ...o, from: "autopilot" }) });
+const acquisitionView = mountAcquisition({ root: $("acquisitionView"), api, h, getStatus: () => status, openAgent: openAgentById, onReview: (o) => startReview({ ...o, from: "acquisition" }) });
 const usersView = mountUsers({ root: $("usersView"), api, h, getStatus: () => status, onChange: refreshStatus });
 const homeView = mountHome({ root: $("homeView"), api, h, icon, getStatus: () => status, go: (v) => showView(v), onNew: newAgent, onEdit: openAgentById });
 const agentsView = mountAgents({ root: $("agentsView"), api, h, icon, getStatus: () => status, onNew: newAgent, onEdit: openAgentById });
@@ -733,6 +745,7 @@ const PAGES = [
   { id: "autopilot", label: "Autopilot", icon: "upload", el: "autopilotView", ctl: autopilotView, staff: true },
   { id: "acquisition", label: "Akquise", icon: "send", el: "acquisitionView", ctl: acquisitionView, staff: true, glow: true },
   { id: "users", label: "Nutzer", icon: "users", el: "usersView", ctl: usersView, admin: true },
+  { id: "review", label: "Durchgehen", icon: "send", el: "reviewView", ctl: reviewView, staff: true, hiddenInNav: true },
 ];
 let currentView = "home";
 const viewAllowed = (v) => {
@@ -744,8 +757,8 @@ const viewAllowed = (v) => {
 };
 function renderNav() {
   const list = $("navList");
-  list.replaceChildren(...PAGES.filter((p) => viewAllowed(p.id)).map((p) => {
-    const b = h("button", { type: "button", class: "nav-item" + (p.glow ? " glow" : ""), "aria-current": p.id === currentView ? "page" : null, onclick: () => { showView(p.id); closeNav(); } },
+  list.replaceChildren(...PAGES.filter((p) => viewAllowed(p.id) && !p.hiddenInNav).map((p) => {
+    const b = h("button", { type: "button", class: "nav-item" + (p.glow ? " glow" : ""), "aria-current": p.id === currentView || (p.id === reviewReturn && currentView === "review") ? "page" : null, onclick: () => { showView(p.id); closeNav(); } },
       icon(p.icon, 20), h("span", { text: p.label }));
     if (p.id === "users" && status.pendingUsers) b.append(h("span", { class: "count", text: String(status.pendingUsers) }));
     return b;
@@ -780,7 +793,7 @@ function showView(v) {
   page.ctl?.show();
   if (v === "builder") api("GET", "/api/agents").then((a) => { agents = a; renderAgentSelect(); }).catch(() => {});
   renderNav();
-  local.set("agentenwerk.view", v);
+  if (v !== "review") local.set("agentenwerk.view", v);
   window.scrollTo(0, 0);
 }
 

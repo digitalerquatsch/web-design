@@ -29,31 +29,40 @@
   var CSS = [
     ":host{all:initial}",
     "*{box-sizing:border-box;font-family:system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif}",
-    ".root{position:fixed;bottom:20px;z-index:2147483000;display:flex;flex-direction:column;align-items:flex-end;gap:12px}",
+    ".root{--pb:#ffffff;--bb:#f4f5f7;--card:#ffffff;--ln:#e3e5e9;--tx:#16181d;--mu:#6b7280;position:fixed;bottom:20px;z-index:2147483000;display:flex;flex-direction:column;align-items:flex-end;gap:12px}",
+    ".root.dark{--pb:#14161b;--bb:#1b1e25;--card:#232731;--ln:#2e3340;--tx:#eef0f4;--mu:#9aa1ae}",
     ".root.left{left:20px;align-items:flex-start}.root.right{right:20px}",
     ".launcher{width:58px;height:58px;border-radius:50%;border:0;background:var(--w);color:var(--wi);box-shadow:0 6px 20px rgba(0,0,0,.22);cursor:pointer;display:grid;place-items:center;transition:transform .15s}",
     ".launcher:hover{transform:scale(1.05)}.launcher:focus-visible,button:focus-visible,input:focus-visible{outline:3px solid var(--w);outline-offset:2px}",
     ".launcher svg{width:26px;height:26px}",
-    ".panel{width:370px;max-width:calc(100vw - 40px);height:560px;max-height:calc(100vh - 110px);background:#fff;color:#16181d;border-radius:16px;box-shadow:0 12px 40px rgba(0,0,0,.25);display:flex;flex-direction:column;overflow:hidden}",
+    ".panel{width:380px;max-width:calc(100vw - 40px);height:600px;max-height:calc(100vh - 110px);background:var(--pb);color:var(--tx);border-radius:18px;box-shadow:0 12px 40px rgba(0,0,0,.28);display:flex;flex-direction:column;overflow:hidden}",
     ".panel[hidden]{display:none}",
-    ".head{background:var(--w);color:var(--wi);padding:14px 14px 14px 16px;display:flex;align-items:center;gap:11px}",
-    ".av{width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,.2);display:grid;place-items:center;font-weight:700;font-size:14px;flex:none}",
-    ".title{display:flex;flex-direction:column;min-width:0;margin-right:auto}.title b{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.title span{font-size:12px;opacity:.85}",
+    ".head{background:var(--w);color:var(--wi);padding:12px 12px 12px 14px;display:flex;align-items:center;gap:11px}",
+    ".av{width:38px;height:38px;border-radius:50%;background:rgba(255,255,255,.22);display:grid;place-items:center;font-weight:700;font-size:14px;flex:none}",
+    ".logo{height:36px;max-width:92px;object-fit:contain;background:#fff;border-radius:8px;padding:3px 5px;flex:none}",
+    ".title{display:flex;flex-direction:column;min-width:0;margin-right:auto}.title b{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+    ".title span{font-size:12px;opacity:.9;display:flex;align-items:center;gap:5px}.title span:before{content:'';width:7px;height:7px;border-radius:50%;background:#4ade80}",
     ".icon{background:none;border:0;color:inherit;opacity:.85;cursor:pointer;width:32px;height:32px;border-radius:8px;font-size:20px;line-height:1}.icon:hover{opacity:1;background:rgba(255,255,255,.15)}",
-    ".body{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:9px;background:#f4f5f7}",
+    ".ai{font-size:12px;color:var(--mu);text-align:center;padding:7px 10px;border-bottom:1px solid var(--ln);background:var(--bb)}",
+    ".body{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:9px;background:var(--bb)}",
+    ".welcome{display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;padding:10px 4px}",
+    ".wlogo{width:72px;height:72px;border-radius:50%;background:#fff;object-fit:contain;padding:8px;box-shadow:0 2px 10px rgba(0,0,0,.08)}",
+    ".wav{width:64px;height:64px;border-radius:50%;background:var(--w);color:var(--wi);display:grid;place-items:center;font-weight:700;font-size:22px}",
+    ".wtext{font-size:16px;font-weight:600;line-height:1.45;color:var(--tx);white-space:pre-wrap;overflow-wrap:anywhere}",
+    ".qlist{display:flex;flex-direction:column;gap:8px;width:100%}",
+    ".qlist button{display:flex;justify-content:space-between;align-items:center;gap:10px;width:100%;text-align:left;border:1px solid var(--ln);background:var(--card);color:var(--tx);border-radius:12px;padding:12px 14px;font-size:14px;cursor:pointer}",
+    ".qlist button:hover{border-color:var(--w)}.qlist button:after{content:'\\203A';color:var(--w);font-size:20px;line-height:1}",
     ".msg{max-width:85%;padding:9px 12px;border-radius:14px;font-size:14px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}",
-    ".bot{background:#fff;border:1px solid #e3e5e9;border-bottom-left-radius:4px;align-self:flex-start}",
+    ".bot{background:var(--card);color:var(--tx);border:1px solid var(--ln);border-bottom-left-radius:4px;align-self:flex-start}",
     ".user{background:var(--w);color:var(--wi);border-bottom-right-radius:4px;align-self:flex-end}",
-    ".typing{color:#6b7280;font-style:italic}",
+    ".typing{color:var(--mu);font-style:italic}",
     ".err{background:#fdecee;color:#a1202c;align-self:stretch;max-width:none;font-size:13px}",
     ".ok{align-self:center;font-size:12px;background:#e3f4ea;color:#1c6b43;padding:3px 10px;border-radius:999px}",
-    ".quick{display:flex;flex-wrap:wrap;gap:6px;padding:0 14px 10px;background:#f4f5f7}",
-    ".quick button{border:1px solid var(--w);background:#fff;color:#16181d;border-radius:999px;padding:5px 11px;font-size:13px;cursor:pointer}",
-    "form{display:flex;gap:8px;padding:10px;border-top:1px solid #e3e5e9;background:#fff}",
-    "input{flex:1;min-width:0;border:1px solid #d6d9de;border-radius:999px;padding:9px 14px;font-size:14px;color:#16181d;background:#fff}",
+    "form{display:flex;gap:8px;padding:10px;border-top:1px solid var(--ln);background:var(--pb)}",
+    "input{flex:1;min-width:0;border:1px solid var(--ln);border-radius:999px;padding:10px 14px;font-size:14px;color:var(--tx);background:var(--bb)}",
     "form button{border:0;background:var(--w);color:var(--wi);border-radius:999px;padding:0 16px;font-weight:600;font-size:14px;cursor:pointer}",
     "form button:disabled{opacity:.5;cursor:default}",
-    ".foot{font-size:11px;color:#6b7280;text-align:center;padding:0 10px 8px;background:#fff}.foot a{color:inherit}",
+    ".foot{font-size:11px;color:var(--mu);text-align:center;padding:0 10px 8px;background:var(--pb)}.foot a{color:inherit}",
     "@media (max-width:480px){.root{bottom:12px}.root.right{right:12px}.root.left{left:12px}.panel{position:fixed;inset:0;width:100vw;max-width:none;height:100%;max-height:none;border-radius:0}}",
     "@media (prefers-reduced-motion:reduce){.launcher{transition:none}}",
   ].join("");
@@ -63,23 +72,30 @@
     host.setAttribute("data-agentenwerk", agentId);
     var shadow = host.attachShadow({ mode: "open" });
     var style = el("style"); style.textContent = CSS; shadow.appendChild(style);
-    var root = el("div", "root " + (cfg.position === "left" ? "left" : "right"));
+    var root = el("div", "root " + (cfg.position === "left" ? "left" : "right") + (cfg.theme === "dark" ? " dark" : ""));
     root.style.setProperty("--w", cfg.color);
     root.style.setProperty("--wi", inkFor(cfg.color));
 
     var panel = el("div", "panel"); panel.hidden = true;
     panel.setAttribute("role", "dialog"); panel.setAttribute("aria-label", "Chat mit " + (cfg.name || "Assistent"));
     var head = el("div", "head");
-    head.appendChild(el("div", "av", (cfg.initials || (cfg.name || "A").slice(0, 2)).toUpperCase()));
+    var initials = (cfg.initials || (cfg.name || "A").slice(0, 2)).toUpperCase();
+    function logoOr(cls, fallbackCls) {
+      var fallback = el("div", fallbackCls, initials);
+      if (!cfg.logoUrl) return fallback;
+      var img = el("img", cls); img.alt = cfg.company || ""; img.src = cfg.logoUrl; img.referrerPolicy = "no-referrer";
+      img.addEventListener("error", function () { if (img.parentNode) img.parentNode.replaceChild(fallback, img); });
+      return img;
+    }
+    head.appendChild(logoOr("logo", "av"));
     var title = el("div", "title");
-    title.appendChild(el("b", null, cfg.name + (cfg.company ? " · " + cfg.company : "")));
+    title.appendChild(el("b", null, cfg.title || (cfg.name + (cfg.company ? " · " + cfg.company : ""))));
     title.appendChild(el("span", null, "Antwortet sofort"));
     head.appendChild(title);
     var restart = el("button", "icon", "↺"); restart.type = "button"; restart.title = "Neue Unterhaltung"; restart.setAttribute("aria-label", "Neue Unterhaltung");
     var close = el("button", "icon", "×"); close.type = "button"; close.setAttribute("aria-label", "Chat schließen");
     head.appendChild(restart); head.appendChild(close);
     var body = el("div", "body"); body.setAttribute("aria-live", "polite");
-    var quick = el("div", "quick");
     var form = el("form");
     var input = el("input"); input.type = "text"; input.maxLength = 2000; input.placeholder = "Nachricht schreiben …"; input.setAttribute("aria-label", "Nachricht");
     var sendBtn = el("button", null, "Senden"); sendBtn.type = "submit";
@@ -91,7 +107,9 @@
       var a = el("a", null, "Datenschutz"); a.href = cfg.privacyUrl; a.target = "_blank"; a.rel = "noopener";
       foot.appendChild(a);
     }
-    panel.appendChild(head); panel.appendChild(body); panel.appendChild(quick); panel.appendChild(form); panel.appendChild(foot);
+    // Transparency: visitors must know they are talking to an AI (EU AI Act, Art. 50).
+    var notice = el("div", "ai", "Sie schreiben mit einem KI-Assistenten");
+    panel.appendChild(head); panel.appendChild(notice); panel.appendChild(body); panel.appendChild(form); panel.appendChild(foot);
 
     var launcher = el("button", "launcher"); launcher.type = "button"; launcher.setAttribute("aria-label", "Chat öffnen");
     launcher.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg>'; // static icon, no user content
@@ -102,20 +120,21 @@
     var busy = false, started = false;
     function scroll() { body.scrollTop = body.scrollHeight; }
     function bubble(cls, text) { var b = el("div", "msg " + cls, text); body.appendChild(b); scroll(); return b; }
-    function renderQuick() {
-      while (quick.firstChild) quick.removeChild(quick.firstChild);
-      if (started) return;
-      (cfg.quickReplies || []).forEach(function (q) {
-        var b = el("button", null, q); b.type = "button";
-        b.addEventListener("click", function () { send(q); });
-        quick.appendChild(b);
-      });
-    }
+    // Before the first message: logo, welcome text and the suggested questions as a list.
     function showWelcome() {
       started = false;
       while (body.firstChild) body.removeChild(body.firstChild);
-      bubble("bot", cfg.welcome || "Hallo! Wie kann ich helfen?");
-      renderQuick();
+      var w = el("div", "welcome");
+      w.appendChild(logoOr("wlogo", "wav"));
+      w.appendChild(el("div", "wtext", cfg.welcome || "Hallo! Wie kann ich helfen?"));
+      var list = el("div", "qlist");
+      (cfg.quickReplies || []).forEach(function (q) {
+        var b = el("button", null, q); b.type = "button";
+        b.addEventListener("click", function () { send(q); });
+        list.appendChild(b);
+      });
+      if (list.firstChild) w.appendChild(list);
+      body.appendChild(w);
     }
     function reset() { store(convKey, null); showWelcome(); input.focus(); }
     function toggle(open) {
@@ -126,7 +145,12 @@
 
     function send(text) {
       if (busy || !text) return;
-      busy = true; sendBtn.disabled = true; started = true; renderQuick();
+      busy = true; sendBtn.disabled = true;
+      if (!started) {
+        started = true;
+        while (body.firstChild) body.removeChild(body.firstChild);
+        bubble("bot", cfg.welcome || "Hallo! Wie kann ich helfen?");
+      }
       bubble("user", text);
       var out = bubble("bot typing", "schreibt …");
       var got = "";
@@ -180,7 +204,8 @@
     panel.addEventListener("keydown", function (e) { if (e.key === "Escape") toggle(false); });
     showWelcome();
     // data-open="1" opens the chat by itself (used by the demo pages), not on phones.
-    if (script.getAttribute("data-open") === "1" && window.matchMedia("(min-width: 641px)").matches) setTimeout(function () { if (panel.hidden) toggle(true); }, 1200);
+    var auto = script.getAttribute("data-open");
+    if (auto === "force" || (auto === "1" && window.matchMedia("(min-width: 641px)").matches)) setTimeout(function () { if (panel.hidden) { panel.hidden = false; launcher.setAttribute("aria-label", "Chat schließen"); } }, auto === "force" ? 50 : 1200);
   }
 
   fetch(api).then(function (r) { return r.ok ? r.json() : null; }).then(function (cfg) {

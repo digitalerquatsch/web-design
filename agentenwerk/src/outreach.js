@@ -186,10 +186,10 @@ export async function createMailer(env = process.env) {
   return {
     from: env.SMTP_FROM || env.SMTP_USER || "",
     dailyLimit: Number(env.OUTREACH_DAILY_LIMIT || 40),
-    async send({ to, subject, text, unsubscribeUrl, replyTo }) {
+    async send({ to, subject, text, html, unsubscribeUrl, replyTo }) {
       await transport.sendMail({
         from: env.SMTP_FROM || env.SMTP_USER,
-        to, subject, text, replyTo,
+        to, subject, text, html, replyTo,
         headers: { "List-Unsubscribe": `<${unsubscribeUrl}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" },
       });
     },
@@ -197,3 +197,56 @@ export async function createMailer(env = process.env) {
 }
 
 export const isEmail = (s) => /^[^\s@<>()",;]+@[^\s@<>()",;]+\.[a-z]{2,}$/i.test(String(s || "").trim());
+
+/* ---------- HTML e-mail ---------- */
+
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+function inkOn(hex) {
+  const n = parseInt(String(hex).slice(1), 16), r = n >> 16 & 255, g = n >> 8 & 255, b = n & 255;
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 > 0.6 ? "#111111" : "#ffffff";
+}
+
+// A short sample conversation in the company's colors: shows what the
+// assistant does without the recipient having to click anything.
+export function sampleDialogue(agentCfg) {
+  const a = withDefaults(agentCfg);
+  const faq = a.faqs.find((f) => f.q.trim() && f.a.trim() && f.a.length < 260);
+  const q = faq?.q || a.quickReplies.find((x) => x.trim()) || "Welche Leistungen bieten Sie an?";
+  const answer = faq?.a || (a.services.split("\n").filter(Boolean).slice(0, 2).join(", ") || "Gern erkläre ich Ihnen unser Angebot und vereinbare direkt einen Termin.");
+  return [
+    { from: "bot", text: a.welcome || `Hallo! Ich bin der Assistent von ${a.company}.` },
+    { from: "user", text: q },
+    { from: "bot", text: answer },
+  ];
+}
+
+export function composeHtml({ draft, sender, demoUrl, unsubscribeUrl, agent: agentCfg }) {
+  const a = withDefaults(agentCfg);
+  const color = /^#[0-9a-f]{6}$/i.test(a.color) ? a.color : "#3a46c9";
+  const ink = inkOn(color);
+  const para = (t) => esc(t).replace(/\n/g, "<br>");
+  const chat = sampleDialogue(a).map((m) => m.from === "bot"
+    ? `<tr><td style="padding:4px 0"><div style="display:inline-block;max-width:85%;background:#ffffff;border:1px solid #e3e5e9;border-radius:14px 14px 14px 4px;padding:9px 12px;font-size:14px;line-height:1.5;color:#16181d">${para(m.text)}</div></td></tr>`
+    : `<tr><td style="padding:4px 0" align="right"><div style="display:inline-block;max-width:85%;background:${color};border-radius:14px 14px 4px 14px;padding:9px 12px;font-size:14px;line-height:1.5;color:${ink};text-align:left">${para(m.text)}</div></td></tr>`).join("");
+  const logo = /^https:\/\//i.test(a.logoUrl) ? `<img src="${esc(a.logoUrl)}" alt="" height="28" style="height:28px;max-width:110px;background:#fff;border-radius:6px;padding:2px 4px;vertical-align:middle">&nbsp;&nbsp;` : "";
+  const card = `
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:18px 0;border-collapse:separate;border:1px solid #e3e5e9;border-radius:16px;overflow:hidden">
+  <tr><td style="background:${color};color:${ink};padding:12px 16px;font-size:15px;font-weight:bold">${logo}${esc(a.widgetTitle || `${a.name} · ${a.company}`)}</td></tr>
+  <tr><td style="background:#f4f5f7;padding:6px 16px;font-size:12px;color:#6b7280;text-align:center">So würde Ihr KI-Assistent auf ${esc(a.website || "Ihrer Website")} antworten</td></tr>
+  <tr><td style="background:#f4f5f7;padding:8px 16px 14px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0">${chat}</table></td></tr>
+  <tr><td style="background:#ffffff;padding:16px;text-align:center"><a href="${esc(demoUrl)}" style="display:inline-block;background:${color};color:${ink};text-decoration:none;font-weight:bold;font-size:15px;padding:12px 22px;border-radius:10px">Demo selbst ausprobieren &rarr;</a></td></tr>
+</table>`;
+  // The draft's {{DEMO_LINK}} line becomes the chat card with the button.
+  const blocks = draft.body.split(/\n{2,}/).map((b) => b.includes("{{DEMO_LINK}}")
+    ? (b.replace("{{DEMO_LINK}}", "").trim() ? `<p style="margin:0 0 14px">${para(b.replace("{{DEMO_LINK}}", "").trim())}</p>` : "") + card
+    : `<p style="margin:0 0 14px">${para(b)}</p>`).join("");
+  const imprint = sender.address ? `${esc(sender.company || sender.name)} · ${esc(sender.address).replace(/\s*\n+\s*/g, " · ")}<br>` : "";
+  return `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${esc(draft.subject)}</title></head>
+<body style="margin:0;padding:0;background:#f6f7f9">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f6f7f9"><tr><td align="center" style="padding:24px 12px">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:580px;background:#ffffff;border-radius:14px;font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1f2329;font-size:15px;line-height:1.6">
+<tr><td style="padding:28px 28px 8px">${blocks}
+<p style="margin:18px 0 0">Viele Grüße<br>${para(signature(sender))}</p></td></tr>
+<tr><td style="padding:16px 28px 26px;font-size:12px;color:#8a919c;border-top:1px solid #eef0f3">${imprint}Sie möchten keine weiteren Nachrichten von uns? <a href="${esc(unsubscribeUrl)}" style="color:#8a919c">Hier abmelden</a>.</td></tr>
+</table></td></tr></table></body></html>`;
+}

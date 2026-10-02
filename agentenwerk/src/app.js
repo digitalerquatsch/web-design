@@ -10,7 +10,7 @@ import { createAuth, AuthError, ROLES, STATUSES, COOKIE, parseCookies, publicUse
 import { withDefaults, publicView } from "../public/prompt.js";
 import { parseTable, mapRows, toCsv, TableError } from "./table.js";
 import { createAutopilot, summarize, ROW_STEPS } from "./autopilot.js";
-import { STAGES, FUNNEL, DEFAULT_SETTINGS, addEvent, summarizeLeads, followUpDue, generateDraft, composeEmail, senderComplete, isEmail } from "./outreach.js";
+import { STAGES, FUNNEL, DEFAULT_SETTINGS, addEvent, summarizeLeads, followUpDue, generateDraft, composeEmail, composeHtml, senderComplete, isEmail } from "./outreach.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(here, "..", "public");
@@ -73,6 +73,8 @@ function sanitizeAgent(input, id) {
   a.allowedOrigins = a.allowedOrigins.filter((o) => typeof o === "string").map((o) => o.trim().replace(/\/+$/, "")).filter((o) => /^https?:\/\/[^/\s]+$/i.test(o)).slice(0, 20);
   a.quickReplies = a.quickReplies.filter((q) => typeof q === "string").slice(0, 5).map((q) => q.slice(0, 40));
   a.color = /^#[0-9a-f]{6}$/i.test(a.color) ? a.color : "#3a46c9";
+  a.logoUrl = /^https?:\/\/[^\s"'<>]{3,500}$/i.test(a.logoUrl) ? a.logoUrl : "";
+  a.widgetTitle = a.widgetTitle.slice(0, 40);
   return a;
 }
 
@@ -85,6 +87,7 @@ export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl 
   const auth = createAuth({ store });
   const loginLimit = new RateLimiter(10, 15 * 60_000);
   const signupLimit = new RateLimiter(5, 60 * 60_000);
+  const testLimit = new RateLimiter(20, 60 * 60_000);
   const TOKEN_ADMIN = { id: "token", name: "Admin-Token", email: "", role: "admin", status: "active", agentIds: [] };
   const LOCAL_ADMIN = { id: "local", name: "Lokal (noch kein Konto)", email: "", role: "admin", status: "active", agentIds: [] };
   const conversations = new Map(); // id -> { agentId, messages, turns, lastAt, test }
@@ -370,7 +373,7 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
     if (p === "/api/settings") return settingsRoute(req, res);
     if (p === "/api/acquisition") return send(res, 200, await acquisitionSummary(req));
     const l = p.match(/^\/api\/leads(?:\/([\w-]+)(\/[a-z-]+)?)?$/);
-    if (l) return leadRoute(req, res, l[1], l[2]);
+    if (l) return leadRoute(req, res, l[1], l[2], me);
     if (p === "/api/agents" && req.method === "GET") {
       const agents = await store.list("agents", (a) => ownsAgent(me, a.id));
       return send(res, 200, agents.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)));
@@ -612,11 +615,13 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
     if (await sentToday() >= mailer.dailyLimit) throw new HttpError(429, `Tageslimit von ${mailer.dailyLimit} E-Mails erreicht. Morgen geht es weiter.`);
     const base = baseUrl(req);
     const unsubscribeUrl = `${base}/abmelden/${lead.unsubToken}`;
-    const text = composeEmail({ draft: lead.draft, sender: settings.sender, demoUrl: `${base}/d/${lead.agentId}`, unsubscribeUrl });
-    await mailer.send({ to: lead.email, subject: lead.draft.subject, text, unsubscribeUrl: `${base}/api/public/unsubscribe/${lead.unsubToken}`, replyTo: settings.sender.email });
+    const agent = await store.get("agents", lead.agentId);
+    const parts = { draft: lead.draft, sender: settings.sender, demoUrl: `${base}/d/${lead.agentId}`, unsubscribeUrl, agent: agent || {} };
+    await mailer.send({ to: lead.email, subject: lead.draft.subject, text: composeEmail(parts), html: composeHtml(parts), unsubscribeUrl: `${base}/api/public/unsubscribe/${lead.unsubToken}`, replyTo: settings.sender.email });
     lead.sent.push({ subject: lead.draft.subject, kind: lead.draft.kind, at: Date.now() });
     addEvent(lead, "email_sent", { kind: lead.draft.kind });
     lead.draft = null;
+    lead.skipped = false;
     if (["neu", "entwurf"].includes(lead.stage)) lead.stage = "kontaktiert";
     await store.put("leads", lead);
   }
@@ -644,7 +649,7 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
     return queue.length;
   }
 
-  async function leadRoute(req, res, id, sub) {
+  async function leadRoute(req, res, id, sub, me = {}) {
     const settings = await getSettings();
     if (!id && req.method === "GET") {
       const leads = await store.list("leads");
@@ -704,7 +709,25 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
     if (sub === "/preview-email" && req.method === "GET") {
       if (!lead.draft) throw new HttpError(400, "Es gibt noch keinen Entwurf.");
       const base = baseUrl(req);
-      return send(res, 200, { subject: lead.draft.subject, text: composeEmail({ draft: lead.draft, sender: settings.sender, demoUrl: `${base}/d/${lead.agentId}`, unsubscribeUrl: `${base}/abmelden/${lead.unsubToken}` }) });
+      const parts = { draft: lead.draft, sender: settings.sender, demoUrl: `${base}/d/${lead.agentId}`, unsubscribeUrl: `${base}/abmelden/${lead.unsubToken}`, agent: (await store.get("agents", lead.agentId)) || {} };
+      return send(res, 200, { subject: lead.draft.subject, text: composeEmail(parts), html: composeHtml(parts) });
+    }
+    // A copy of the exact e-mail to the sender's own address. Changes nothing on the lead.
+    if (sub === "/test-send" && req.method === "POST") {
+      if (!mailer) throw new HttpError(503, "Kein E-Mail-Versand eingerichtet. Trage SMTP_HOST, SMTP_USER und SMTP_PASS in die .env ein.");
+      if (!lead.draft) throw new HttpError(400, "Es gibt noch keinen Entwurf.");
+      if (!isEmail(settings.sender.email)) throw new HttpError(400, "Trage zuerst deine E-Mail-Adresse in den Einstellungen ein.");
+      if (!testLimit.allow(me.id || "x")) throw new HttpError(429, "Genug Vorschauen für den Moment. Bitte etwas warten.");
+      const base = baseUrl(req);
+      const parts = { draft: lead.draft, sender: settings.sender, demoUrl: `${base}/d/${lead.agentId}?intern=1`, unsubscribeUrl: `${base}/abmelden/vorschau`, agent: (await store.get("agents", lead.agentId)) || {} };
+      await mailer.send({ to: settings.sender.email, subject: `[Vorschau] ${lead.draft.subject}`, text: composeEmail(parts), html: composeHtml(parts), unsubscribeUrl: `${base}/`, replyTo: settings.sender.email });
+      return send(res, 200, { ok: true, to: settings.sender.email });
+    }
+    if (sub === "/skip" && req.method === "POST") {
+      lead.skipped = true;
+      addEvent(lead, "skipped");
+      await store.put("leads", lead);
+      return send(res, 200, leadView(lead, settings));
     }
     throw new HttpError(404, "Nicht gefunden.");
   }
@@ -761,6 +784,8 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
     try { data = await fs.readFile(file); } catch { throw new HttpError(404, "Nicht gefunden."); }
     const headers = { "content-type": TYPES[path.extname(file)] || "application/octet-stream", "x-content-type-options": "nosniff" };
     if (rel === "widget.js") Object.assign(headers, { "access-control-allow-origin": "*", "cache-control": "public, max-age=300" });
+    // The demo page may be framed by the builder itself (review mode), nobody else.
+    else if (rel === "preview.html") Object.assign(headers, { "cache-control": "no-cache", "x-frame-options": "SAMEORIGIN", "content-security-policy": "frame-ancestors 'self'", "referrer-policy": "same-origin" });
     else Object.assign(headers, { "cache-control": "no-cache", "x-frame-options": "DENY", "referrer-policy": "same-origin" });
     res.writeHead(200, headers);
     res.end(req.method === "HEAD" ? undefined : data);

@@ -161,3 +161,51 @@ test("helpers: follow-up timing, funnel, composed e-mail", () => {
   assert.match(text, /Agentur · Weg 1 · 12345 Ort/);
   assert.match(text, /Ein Klick genügt: https:\/\/x\/abmelden\/t$/);
 });
+
+test("HTML e-mail: sample chat in brand colors, everything escaped", async () => {
+  const { composeHtml, sampleDialogue } = await import("../src/outreach.js");
+  const agent = { name: "Ida", company: "Fahrschule <Schlachter>", color: "#f0c040", website: "fahrschule.de", welcome: "Willkommen!", logoUrl: "https://fahrschule.de/logo.png",
+    faqs: [{ q: "Kann ich B197 machen?", a: "Ja, bei uns geht B197 mit <Automatik> und Schaltung." }], widgetTitle: "Fragen zum Führerschein?" };
+  const d = sampleDialogue(agent);
+  assert.deepEqual(d.map((m) => m.from), ["bot", "user", "bot"]);
+  assert.equal(d[1].text, "Kann ich B197 machen?");
+  const html = composeHtml({ draft: { subject: "Demo", body: "Guten Tag,\n\nkurz.\n\n{{DEMO_LINK}}\n\nInteresse?" }, sender: { name: "Anna", company: "Agentur", email: "a@b.de", address: "Weg 1" }, demoUrl: "https://x/d/1", unsubscribeUrl: "https://x/abmelden/t", agent });
+  assert.ok(html.includes("&lt;Automatik&gt;"), "answers are escaped");
+  assert.ok(!html.includes("<Schlachter>"));
+  assert.ok(html.includes("background:#f0c040"), "brand color used");
+  assert.ok(html.includes("color:#111111"), "dark text on a light brand color");
+  assert.ok(html.includes('href="https://x/d/1"'));
+  assert.ok(html.includes("Fragen zum Führerschein?"));
+  assert.ok(html.includes("https://fahrschule.de/logo.png"));
+  assert.ok(html.includes('href="https://x/abmelden/t"'));
+  assert.ok(!html.includes("{{DEMO_LINK}}"));
+});
+
+test("test-send goes to the sender only, skip marks the lead", async () => {
+  const csv = "Website;E-Mail\nvorschau-test.de;kunde@vorschau-test.de\n";
+  await fetch(`${base}/api/batches?filename=v.csv`, { method: "POST", headers: { "x-agentenwerk": "1" }, body: csv });
+  const lead = await until(async () => (await j("GET", "/api/leads")).body.find((l) => l.url.includes("vorschau-test")));
+  await j("POST", `/api/leads/${lead.id}/draft`, {});
+  sent.length = 0;
+  const r = await j("POST", `/api/leads/${lead.id}/test-send`);
+  assert.equal(r.status, 200);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].to, "anna@agentur.de");
+  assert.match(sent[0].subject, /^\[Vorschau\]/);
+  assert.match(sent[0].html, /Demo selbst ausprobieren/);
+  const after = (await j("GET", `/api/leads/${lead.id}`)).body;
+  assert.equal(after.sent.length, 0, "a preview is not a send");
+  assert.ok(after.draft, "draft stays");
+  const sk = await j("POST", `/api/leads/${lead.id}/skip`);
+  assert.equal(sk.body.skipped, true);
+  const pv = await j("GET", `/api/leads/${lead.id}/preview-email`);
+  assert.match(pv.body.html, /<!doctype html>/);
+});
+
+test("demo page may be framed by the builder only", async () => {
+  const leads = (await j("GET", "/api/leads")).body;
+  const r = await fetch(`${base}/d/${leads[0].agentId}`);
+  assert.equal(r.headers.get("x-frame-options"), "SAMEORIGIN");
+  assert.match(r.headers.get("content-security-policy"), /frame-ancestors 'self'/);
+  assert.equal((await fetch(`${base}/`)).headers.get("x-frame-options"), "DENY");
+});

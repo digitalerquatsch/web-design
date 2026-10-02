@@ -3,7 +3,7 @@
 
 const SAMPLE = "Firma;Website;Ansprechpartner;E-Mail\nPhysiotherapie Am Park;physio-ampark.de;Anna Weber;info@physio-ampark.de\nSalon Lindgrün;salon-lindgruen.de;Lena Grün;hallo@salon-lindgruen.de\n";
 
-export function mountAutopilot({ root, api, h, headers, getStatus, openAgent }) {
+export function mountAutopilot({ root, api, h, headers, getStatus, openAgent, onReview }) {
   let batches = [];
   let current = null;       // full batch with rows
   let timer = null;
@@ -110,7 +110,13 @@ export function mountAutopilot({ root, api, h, headers, getStatus, openAgent }) 
     if (!current) return null;
     const b = current;
     const actions = h("div", { class: "toolbar" },
-      h("button", { type: "button", class: "btn primary", text: "Ergebnis als Tabelle", disabled: !b.counts.done || null, onclick: async () => {
+      b.counts.done ? h("button", { type: "button", class: "btn primary", text: "Durchgehen & senden", onclick: async () => {
+        const leads = await api("GET", "/api/leads");
+        const order = new Map(b.rows.map((r, i) => [r.agentId, i]));
+        const mine = leads.filter((l) => l.batchId === b.id).sort((x, y) => (order.get(x.agentId) ?? 0) - (order.get(y.agentId) ?? 0));
+        onReview({ leadIds: mine.map((l) => l.id), label: b.name });
+      } }) : null,
+      h("button", { type: "button", class: "btn", text: "Ergebnis als Tabelle", disabled: !b.counts.done || null, onclick: async () => {
         const res = await fetch(`/api/batches/${b.id}/export`, { headers: headers() });
         if (res.ok) download(`${b.name.replace(/[^\wäöüÄÖÜß -]+/g, "").trim() || "autopilot"}.csv`, await res.blob());
       } }),

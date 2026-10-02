@@ -24,6 +24,7 @@ export const BASE = {
   goal: "support", services: "", bookingRules: "", leadFields: ["name", "email", "anliegen"], handoff: "",
   dos: "", donts: "", privacy: true, privacyUrl: "",
   color: "#3a46c9", position: "right", welcome: "Hallo! Wie kann ich Ihnen helfen?", quickReplies: [], initials: "",
+  logoUrl: "", widgetTitle: "", widgetTheme: "light",
   promptOverride: null,
   allowedOrigins: [],
   source: null, // { url, importedAt, pages: [{url, title}], missing: [] } after a website import
@@ -106,7 +107,8 @@ export function fromTemplate(key) {
 export function withDefaults(cfg) {
   const out = { ...clone(BASE), ...(cfg || {}) };
   for (const k of ["tone", "faqs", "leadFields", "quickReplies", "allowedOrigins"]) if (!Array.isArray(out[k])) out[k] = clone(BASE[k]);
-  for (const k of ["name", "company", "industry", "website", "role", "knowledge", "hours", "services", "bookingRules", "handoff", "dos", "donts", "privacyUrl", "welcome", "initials"]) if (typeof out[k] !== "string") out[k] = "";
+  for (const k of ["name", "company", "industry", "website", "role", "knowledge", "hours", "services", "bookingRules", "handoff", "dos", "donts", "privacyUrl", "welcome", "initials", "logoUrl", "widgetTitle"]) if (typeof out[k] !== "string") out[k] = "";
+  if (out.widgetTheme !== "dark") out.widgetTheme = "light";
   if (!GOALS[out.goal]) out.goal = "support";
   out.faqs = out.faqs.filter((f) => f && typeof f.q === "string" && typeof f.a === "string");
   out.leadFields = out.leadFields.filter((f) => LEAD_FIELDS[f]);
@@ -164,5 +166,8 @@ export function publicView(agent) {
     id: agent.id, name: c.name, company: c.company, color: c.color, position: c.position === "left" ? "left" : "right",
     welcome: c.welcome, quickReplies: c.quickReplies.filter((q) => q.trim()).slice(0, 5), initials: c.initials,
     privacyUrl: c.privacy ? c.privacyUrl : "",
+    logoUrl: /^https?:\/\//i.test(c.logoUrl) ? c.logoUrl : "",
+    title: c.widgetTitle,
+    theme: c.widgetTheme,
   };
 }

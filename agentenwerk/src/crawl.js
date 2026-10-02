@@ -172,6 +172,21 @@ function metaContent(html, key) {
   }
   return "";
 }
+// The site's logo: an <img> that calls itself a logo (usually in the header),
+// else the apple-touch-icon. Only http(s) URLs, never data: or SVG sprites.
+export function findLogo(html, base) {
+  const abs = (u) => { try { const x = new URL(u, base); return /^https?:$/.test(x.protocol) ? x.href : ""; } catch { return ""; } };
+  const imgs = html.match(/<img\b[^>]*>/gi) || [];
+  for (const tag of imgs.slice(0, 60)) {
+    const src = attr(tag, "src") || attr(tag, "data-src") || (attr(tag, "srcset") || "").split(/[\s,]+/)[0];
+    if (!src || src.startsWith("data:")) continue;
+    const hay = `${attr(tag, "class") || ""} ${attr(tag, "id") || ""} ${attr(tag, "alt") || ""} ${src}`.toLowerCase();
+    if (/logo|brand|signet/.test(hay)) { const u = abs(src); if (u) return u; }
+  }
+  const icon = /<link\b[^>]*rel=["'][^"']*apple-touch-icon[^"']*["'][^>]*>/i.exec(html)?.[0];
+  return icon ? abs(attr(icon, "href") || "") : "";
+}
+
 const sameSite = (a, b) => a.replace(/^www\./, "") === b.replace(/^www\./, "");
 
 export function extractPage(html, pageUrl) {
@@ -201,6 +216,7 @@ export function extractPage(html, pageUrl) {
   }
   return {
     url: pageUrl,
+    logo: findLogo(html, base),
     title,
     description: metaContent(html, "description") || metaContent(html, "og:description"),
     siteName: metaContent(html, "og:site_name"),
@@ -332,6 +348,7 @@ export async function crawlSite(input, { maxPages = 8, perPageChars = 12000, tot
       title: home.title,
       description: home.description,
       themeColor: /^#[0-9a-f]{3,8}$/i.test(home.themeColor) ? home.themeColor : "",
+      logo: home.logo || "",
       headings: [...new Set(home.text.split("\n").filter((l) => l.startsWith("## ")).map((l) => l.slice(3).trim()).filter((l) => l.length > 2 && l.length < 90))].slice(0, 6),
       lang: home.lang,
       privacyUrl,

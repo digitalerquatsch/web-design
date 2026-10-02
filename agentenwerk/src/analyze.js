@@ -22,7 +22,8 @@ export const AgentDraft = z.object({
   handoff: z.string().describe("Wann und wie an einen Menschen verwiesen wird, mit Kontaktweg von der Website"),
   faqs: z.array(z.object({ q: z.string(), a: z.string() })).describe("6–10 Fragen, die Besucher dieser Website wirklich stellen würden, jeweils mit Antwort ausschließlich aus dem Inhalt"),
   quickReplies: z.array(z.string()).describe("3–4 kurze Einstiegsfragen als Buttons, je höchstens 30 Zeichen"),
-  welcome: z.string().describe("Begrüßung des Assistenten, 1–2 Sätze, nennt Name und Firma"),
+  welcome: z.string().describe("Begrüßung des Assistenten, 1–2 Sätze, nennt die Firma und endet mit einer konkreten Frage zum wichtigsten Angebot"),
+  widgetTitle: z.string().describe("Titel im Chat-Kopf, höchstens 28 Zeichen, als Frage aus Sicht des Besuchers, z. B. „Fragen zum Führerschein?“"),
   dos: z.string().describe("1–3 Regeln, eine pro Zeile, die der Assistent immer befolgen soll"),
   donts: z.string().describe("1–3 Regeln, eine pro Zeile, was der Assistent nie tun soll"),
   color: z.string().describe("Markenfarbe als #rrggbb"),
@@ -92,6 +93,8 @@ export function toAgentPatch(draft, crawl) {
     faqs: draft.faqs.filter((f) => f.q.trim() && f.a.trim()).slice(0, 12),
     quickReplies: draft.quickReplies.map((q) => q.trim()).filter(Boolean).slice(0, 4).map((q) => q.slice(0, 40)),
     welcome: draft.welcome.trim(),
+    widgetTitle: String(draft.widgetTitle || "").trim().slice(0, 40),
+    logoUrl: crawl.meta.logo || "",
     dos: draft.dos.trim(),
     donts: draft.donts.trim(),
     color: HEX.test(draft.color) ? draft.color : (HEX.test(crawl.meta.themeColor) ? crawl.meta.themeColor : "#3a46c9"),
@@ -99,7 +102,7 @@ export function toAgentPatch(draft, crawl) {
     privacyUrl: crawl.meta.privacyUrl || "",
   });
   if (!patch.leadFields.length) patch.leadFields = ["name", "email", "anliegen"];
-  const fields = Object.fromEntries(Object.keys(patch).filter((k) => !["promptOverride", "allowedOrigins", "source", "position", "length", "emojis"].includes(k)).map((k) => [k, patch[k]]));
+  const fields = Object.fromEntries(Object.keys(patch).filter((k) => !["promptOverride", "allowedOrigins", "source", "position", "length", "emojis", "widgetTheme"].includes(k)).map((k) => [k, patch[k]]));
   return {
     fields,
     goalReason: draft.goalReason,

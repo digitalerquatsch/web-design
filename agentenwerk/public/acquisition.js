@@ -14,7 +14,7 @@ const EVENT_LABELS = {
   error: "Fehler",
 };
 
-export function mountAcquisition({ root, api, h, getStatus, openAgent }) {
+export function mountAcquisition({ root, api, h, getStatus, openAgent, onReview }) {
   let data = null;          // /api/acquisition
   let leads = [];
   let settings = null;
@@ -162,7 +162,8 @@ export function mountAcquisition({ root, api, h, getStatus, openAgent }) {
       h("button", { type: "button", class: "btn ghost", text: "Auswahl aufheben", onclick: () => { selected.clear(); render(); } })) : null;
 
     return h("section", { class: "panel aq-card aq-list" },
-      h("div", { class: "aq-card-head" }, h("h3", { text: "Leads" }), search),
+      h("div", { class: "aq-card-head" }, h("h3", { text: "Leads" }), h("div", { class: "toolbar" }, search,
+        vis.length ? h("button", { type: "button", class: "btn primary", text: `Einzeln durchgehen (${vis.length})`, onclick: () => onReview({ leadIds: vis.map((l) => l.id), start: Math.max(0, vis.findIndex((l) => l.id === openId)), label: filter === "alle" ? "Alle Leads" : (stages()[filter] || "Auswahl") }) }) : null)),
       chips, bulk,
       h("div", { class: "lead-head" }, all, h("span", { text: "Firma" }), h("span", { text: "Status" }), h("span", { text: "Signale" }), h("span", { text: "Zuletzt" })),
       h("div", { id: "aqRows" }, rowsFor(vis)));

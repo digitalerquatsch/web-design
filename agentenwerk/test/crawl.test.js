@@ -98,3 +98,12 @@ test("fetchPage rejects non-HTML responses", async () => {
   const fetchImpl = async () => new Response("%PDF", { status: 200, headers: { "content-type": "application/pdf" } });
   await assert.rejects(fetchPage("https://x.de/a", { fetchImpl, lookup: publicLookup }), /keine Webseite/);
 });
+
+test("findLogo prefers an image called logo, then the touch icon", async () => {
+  const { findLogo } = await import("../src/crawl.js");
+  const base = new URL("https://fahrschule.de/");
+  assert.equal(findLogo('<img src="/hero.jpg"><a href="/"><img class="site-logo" src="/img/logo.svg" alt="Fahrschule"></a>', base), "https://fahrschule.de/img/logo.svg");
+  assert.equal(findLogo('<img src="data:image/png;base64,xx" alt="logo"><link rel="apple-touch-icon" href="/apple.png">', base), "https://fahrschule.de/apple.png");
+  assert.equal(findLogo('<img src="/hero.jpg">', base), "");
+  assert.equal(findLogo('<img alt="Logo" src="javascript:alert(1)">', base), "");
+});

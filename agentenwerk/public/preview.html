@@ -35,6 +35,8 @@
   .grid p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.5; }
   .note { padding: 0 5% 64px; color: var(--muted); font-size: 13px; }
   .msg { max-width: 560px; margin: 18vh auto; padding: 24px; text-align: center; color: var(--muted); }
+  .embed .bar { display: none; }
+  .embed .stage { min-height: 100vh; box-shadow: none; }
   @media (max-width: 640px) { .bar .by { margin-left: 0; } .hint { display: none; } .mock nav { display: none; } }
 </style>
 </head>
@@ -45,6 +47,9 @@
 (function () {
   "use strict";
   var id = (location.pathname.match(/\/d\/([\w-]+)/) || [])[1];
+  var params = new URLSearchParams(location.search);
+  var embed = params.has("embed"); // framed inside the builder's review mode
+  if (embed) document.documentElement.classList.add("embed");
   var stage = document.getElementById("stage");
   var bar = document.getElementById("bar");
   function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
@@ -104,12 +109,12 @@
     close.addEventListener("click", function () { hint.remove(); });
     hint.appendChild(close);
     if (p.position === "left") { hint.style.left = "auto"; hint.style.right = "16px"; }
-    document.body.appendChild(hint);
+    if (!embed) document.body.appendChild(hint);
 
     var s = document.createElement("script");
     s.src = "/widget.js";
     s.setAttribute("data-agent", id);
-    s.setAttribute("data-open", "1");
+    s.setAttribute("data-open", params.has("open") ? "force" : "1");
     document.body.appendChild(s);
   }).catch(function (e) { fail(e.message); });
 })();

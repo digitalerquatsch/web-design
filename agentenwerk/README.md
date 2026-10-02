@@ -12,7 +12,7 @@ Ein No-Code-Builder für Website-Chatbots. Du gibst deine Website-Adresse ein. A
 - **Akquise-Dashboard:** Jede fertige Website aus dem Autopiloten wird ein Lead. Mistral schreibt pro Lead eine kurze, persönliche E-Mail mit Demo-Link. Du prüfst sie und sendest mit einem Klick. Das Dashboard zeigt, wer die Demo geöffnet oder darin gechattet hat, wann Nachfassen fällig ist und wie die Pipeline steht.
 - **Nutzerverwaltung:** Konten mit E-Mail und Passwort. Neue Leute beantragen einen Zugang, ein Admin schaltet sie frei. Rollen: Admin, Team, Kunde. Kunden sehen nur die Agenten, die du ihnen zuweist.
 - **KI aus der EU:** Standard ist Mistral AI (Sitz Paris). Claude von Anthropic ist als Alternative einstellbar.
-- **Widget zum Einbinden:** ein Script-Tag, Darstellung im Shadow DOM (die CSS deiner Seite stört nicht), mobil im Vollbild. Optional nur für freigegebene Domains.
+- **Widget zum Einbinden:** ein Script-Tag, Darstellung im Shadow DOM (die CSS deiner Seite stört nicht), mobil im Vollbild. Logo und Farbe des Betriebs, eigener Chat-Titel, hell oder dunkel, Begrüßungsbildschirm mit den Einstiegsfragen als Liste und der Hinweis „Sie schreiben mit einem KI-Assistenten“ (Transparenzpflicht nach EU AI Act). Optional nur für freigegebene Domains.
 
 ## Aufbau der Oberfläche
 
@@ -97,6 +97,17 @@ So läuft es:
 5. Ohne Antwort nach X Tagen erscheint der Lead unter **Nachfassen fällig**. Mistral schreibt dann eine kurze Nachfass-E-Mail.
 6. Interessiert, Kunde oder kein Interesse setzt du von Hand. Notizen gibt es pro Lead.
 
+**Durchgehen:** Mit **Einzeln durchgehen** (Akquise) oder **Durchgehen & senden** (Autopilot) arbeitest du Betrieb für Betrieb ab:
+
+- links die echte Demo im Browser-Rahmen, auf der Website des Betriebs mit geöffnetem Chat,
+- rechts der Betrieb (E-Mail-Adresse direkt korrigierbar) und „Das geht raus“: Farbe, Hell/Dunkel und Begrüßung ändern und **Übernehmen**, die Demo aktualisiert sich sofort,
+- darunter die E-Mail genau so, wie sie ankommt, mit Beispiel-Chat in den Farben des Betriebs und Button „Demo selbst ausprobieren“,
+- **Vorschau an mich** schickt dir die E-Mail zur Kontrolle, **Senden** verschickt sie und springt zum nächsten Betrieb, **Überspringen** lässt ihn aus.
+
+Fehlt einem Betrieb noch der Entwurf, schreibt Mistral ihn beim Öffnen automatisch.
+
+**Die E-Mail** geht als HTML mit Textversion raus: Anrede, kurzer Text, ein Beispiel-Chat (Begrüßung, eine typische Frage aus den FAQ und die Antwort des Assistenten), der Demo-Button, deine Signatur, Anschrift und Abmeldelink.
+
 **Versand:** über das SMTP deines Postfachs (`SMTP_*` in der `.env`). Es gibt ein Tageslimit (`OUTREACH_DAILY_LIMIT`, Standard 40), damit dein Postfach nicht als Spam eingestuft wird. Jede E-Mail hat einen Abmeldelink und den Header `List-Unsubscribe` (Ein-Klick-Abmeldung in Gmail/Outlook). Wer sich abmeldet, landet auf einer Sperrliste und bekommt nie wieder eine E-Mail. Ohne SMTP kannst du die Texte kopieren.
 
 **Was nicht passiert:** Nichts wird automatisch verschickt. Jede E-Mail geht erst nach deinem Klick raus. Es gibt auch keine Tracking-Pixel in E-Mails. Gezählt werden nur Aufrufe der Demo-Seite auf deinem eigenen Server.
@@ -164,6 +175,7 @@ src/security.js      Admin-Prüfung, Rate-Limit, erlaubte Domains
 public/prompt.js     Vorlagen und Prompt-Generator (Browser und Server)
 public/app.js        App-Rahmen (Navigation, Anmeldung) und Builder
 public/home.js       Startseite
+public/review.js     Durchgehen: Demo, Feinschliff, E-Mail, Senden/Überspringen
 public/agents.js     Agenten-Übersicht (Cards)
 public/icons.js      Linien-Icons
 public/autopilot.js  Autopilot-Oberfläche
