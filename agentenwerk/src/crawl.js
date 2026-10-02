@@ -332,6 +332,7 @@ export async function crawlSite(input, { maxPages = 8, perPageChars = 12000, tot
       title: home.title,
       description: home.description,
       themeColor: /^#[0-9a-f]{3,8}$/i.test(home.themeColor) ? home.themeColor : "",
+      headings: [...new Set(home.text.split("\n").filter((l) => l.startsWith("## ")).map((l) => l.slice(3).trim()).filter((l) => l.length > 2 && l.length < 90))].slice(0, 6),
       lang: home.lang,
       privacyUrl,
       emails: [...new Set(pages.flatMap((p) => p.emails))].slice(0, 5),

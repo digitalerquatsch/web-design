@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Vorschau · KI-Assistent</title>
+<link rel="icon" href="data:,">
+<style>
+  :root { --brand: #3a46c9; --ink: #16191f; --muted: #5b6370; --line: #e2e5ea; --bg: #eef0f3; color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; color: var(--ink); background: var(--bg); }
+  .bar { position: sticky; top: 0; z-index: 10; background: #12151a; color: #f2f4f7; padding: 10px 16px; display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; font-size: 14px; }
+  .bar strong { font-weight: 650; }
+  .bar .sub { color: #b8bfca; }
+  .bar .by { margin-left: auto; color: #b8bfca; font-size: 13px; }
+  .stage { max-width: 1366px; margin: 0 auto; background: #fff; min-height: calc(100vh - 44px); box-shadow: 0 0 0 1px var(--line); }
+  .shot { display: block; width: 100%; height: auto; }
+  .hint { position: fixed; left: 16px; bottom: 16px; z-index: 5; max-width: 300px; background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; font-size: 13px; line-height: 1.45; color: var(--muted); box-shadow: 0 8px 24px rgba(0,0,0,.12); }
+  .hint b { color: var(--ink); display: block; margin-bottom: 2px; font-size: 14px; }
+  .hint button { display: block; margin-top: 6px; border: 0; background: none; color: var(--muted); text-decoration: underline; cursor: pointer; padding: 0; font: inherit; }
+  /* generated stand-in when there is no screenshot */
+  .mock header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 20px 5%; border-bottom: 1px solid var(--line); }
+  .logo { font-weight: 750; font-size: 20px; letter-spacing: -.01em; display: flex; align-items: center; gap: 10px; }
+  .logo i { width: 32px; height: 32px; border-radius: 8px; background: var(--brand); display: inline-block; }
+  .mock nav { display: flex; gap: 22px; color: var(--muted); font-size: 15px; flex-wrap: wrap; }
+  .hero { padding: 72px 5% 64px; background: linear-gradient(180deg, color-mix(in srgb, var(--brand) 9%, #fff), #fff); }
+  .hero .eyebrow { color: var(--brand); font-weight: 650; font-size: 14px; text-transform: uppercase; letter-spacing: .08em; }
+  .hero h1 { font-size: clamp(30px, 5vw, 52px); line-height: 1.08; margin: 10px 0 16px; max-width: 18ch; text-wrap: balance; }
+  .hero p { font-size: 18px; color: var(--muted); max-width: 60ch; line-height: 1.55; margin: 0; }
+  .cta { display: inline-block; margin-top: 26px; background: var(--brand); color: #fff; padding: 12px 22px; border-radius: 10px; font-weight: 600; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr)); gap: 16px; padding: 48px 5%; }
+  .grid div { border: 1px solid var(--line); border-radius: 12px; padding: 18px; min-height: 110px; }
+  .grid h3 { margin: 0 0 6px; font-size: 16px; }
+  .grid p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.5; }
+  .note { padding: 0 5% 64px; color: var(--muted); font-size: 13px; }
+  .msg { max-width: 560px; margin: 18vh auto; padding: 24px; text-align: center; color: var(--muted); }
+  @media (max-width: 640px) { .bar .by { margin-left: 0; } .hint { display: none; } .mock nav { display: none; } }
+</style>
+</head>
+<body>
+<div class="bar" id="bar"><strong>Vorschau wird geladen …</strong></div>
+<main class="stage" id="stage"></main>
+<script>
+(function () {
+  "use strict";
+  var id = (location.pathname.match(/\/d\/([\w-]+)/) || [])[1];
+  var stage = document.getElementById("stage");
+  var bar = document.getElementById("bar");
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function fail(text) { bar.replaceChildren(el("strong", null, "Vorschau")); stage.replaceChildren(el("p", "msg", text)); }
+  if (!id) return fail("Dieser Link ist unvollständig.");
+
+  fetch("/api/public/agents/" + encodeURIComponent(id) + "/preview").then(function (r) {
+    return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || "Diese Vorschau gibt es nicht."); return j; });
+  }).then(function (p) {
+    var host = "";
+    try { host = new URL(p.website).hostname.replace(/^www\./, ""); } catch (e) { host = p.company; }
+    document.title = "Vorschau für " + (p.company || host) + " · KI-Assistent";
+    if (/^#[0-9a-f]{6}$/i.test(p.color)) document.documentElement.style.setProperty("--brand", p.color);
+
+    bar.replaceChildren(
+      el("strong", null, "Vorschau für " + (p.company || host)),
+      el("span", "sub", "So könnte " + (p.name || "Ihr KI-Assistent") + " auf " + host + " Ihre Besucher beraten.")
+    );
+    if (p.agency && p.agency.name) bar.appendChild(el("span", "by", "Erstellt von " + p.agency.name + (p.agency.contact ? " · " + p.agency.contact : "")));
+
+    if (p.screenshot) {
+      var img = el("img", "shot");
+      img.alt = "Startseite von " + host;
+      img.src = "/api/public/agents/" + encodeURIComponent(id) + "/screenshot";
+      stage.replaceChildren(img);
+    } else {
+      var mock = el("div", "mock");
+      var header = el("header");
+      var logo = el("div", "logo"); logo.appendChild(el("i")); logo.appendChild(document.createTextNode(p.company || host));
+      var nav = el("nav");
+      ["Leistungen", "Über uns", "Kontakt"].forEach(function (t) { nav.appendChild(el("span", null, t)); });
+      header.appendChild(logo); header.appendChild(nav);
+      var hero = el("section", "hero");
+      hero.appendChild(el("div", "eyebrow", p.industry || host));
+      hero.appendChild(el("h1", null, p.title || p.company));
+      if (p.description) hero.appendChild(el("p", null, p.description));
+      hero.appendChild(el("span", "cta", "Kontakt aufnehmen"));
+      var grid = el("section", "grid");
+      var items = (p.services && p.services.length ? p.services : p.headings).slice(0, 6);
+      items.forEach(function (t) {
+        var parts = String(t).split(/\s+[–-]\s+/);
+        var card = el("div");
+        card.appendChild(el("h3", null, parts[0]));
+        if (parts.length > 1) card.appendChild(el("p", null, parts.slice(1).join(" · ")));
+        grid.appendChild(card);
+      });
+      mock.appendChild(header); mock.appendChild(hero);
+      if (items.length) mock.appendChild(grid);
+      mock.appendChild(el("p", "note", "Nachempfundene Darstellung von " + host + ". Inhalte stammen von der Website."));
+      stage.replaceChildren(mock);
+    }
+
+    var hint = el("div", "hint");
+    hint.appendChild(el("b", null, "Probieren Sie es aus"));
+    hint.appendChild(document.createTextNode((p.name || "Der Assistent") + " kennt Ihre Leistungen, Preise und Öffnungszeiten von Ihrer Website. Stellen Sie im Chat eine Frage, wie es Ihre Kunden tun würden."));
+    var close = el("button", null, "Ausblenden"); close.type = "button";
+    close.addEventListener("click", function () { hint.remove(); });
+    hint.appendChild(close);
+    if (p.position === "left") { hint.style.left = "auto"; hint.style.right = "16px"; }
+    document.body.appendChild(hint);
+
+    var s = document.createElement("script");
+    s.src = "/widget.js";
+    s.setAttribute("data-agent", id);
+    s.setAttribute("data-open", "1");
+    document.body.appendChild(s);
+  }).catch(function (e) { fail(e.message); });
+})();
+</script>
+</body>
+</html>

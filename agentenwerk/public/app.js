@@ -1,6 +1,7 @@
 // Agentenwerk builder. Talks to the server's admin API; everything that is
 // rendered from agent data goes through textContent, never innerHTML.
 
+import { mountAutopilot } from "./autopilot.js";
 import { TEMPLATES, TONES, GOALS, LEAD_FIELDS, COLORS, fromTemplate, withDefaults, buildPrompt, activePrompt } from "./prompt.js";
 
 /* ---------- helpers ---------- */
@@ -665,6 +666,32 @@ $("mBuild").addEventListener("click", () => mobileView("build"));
 $("mTest").addEventListener("click", () => mobileView("test"));
 window.addEventListener("beforeunload", () => { if (saveEl.dataset.s === "saving") flush(); });
 
+/* ---------- views ---------- */
+const autopilotView = mountAutopilot({
+  root: $("autopilotView"), api, h, headers, getStatus: () => status,
+  openAgent: async (id) => {
+    await flush();
+    try { agents = await api("GET", "/api/agents"); } catch { return; }
+    const a = agents.find((x) => x.id === id);
+    if (a) { showView("builder"); section = "basis"; loadAgent(a); }
+  },
+});
+function showView(v) {
+  const auto = v === "autopilot";
+  $("vBuilder").setAttribute("aria-pressed", String(!auto));
+  $("vAutopilot").setAttribute("aria-pressed", String(auto));
+  $("autopilotView").hidden = !auto;
+  $("bench").hidden = auto;
+  $("agentSwitch").hidden = auto;
+  if (auto) autopilotView.show(); else autopilotView.hide();
+  local.set("agentenwerk.view", v);
+}
+$("vBuilder").addEventListener("click", async () => {
+  showView("builder");
+  try { agents = await api("GET", "/api/agents"); renderAgentSelect(); } catch { /* keep list */ }
+});
+$("vAutopilot").addEventListener("click", () => showView("autopilot"));
+
 /* ---------- boot ---------- */
 function renderAll() { renderRail(); renderForm(); applyWidgetLook(); renderAgentSelect(); }
 
@@ -683,5 +710,6 @@ async function boot() {
   banner.textContent = status.aiConfigured ? "" : "ANTHROPIC_API_KEY fehlt in der .env des Servers. Konfigurieren geht, aber Website-Analyse und Testchat antworten erst mit Key.";
   if (agents.length) loadAgent(agents[0]);
   else { cfg = fromTemplate("blank"); setSave("example", "Neu · wird beim ersten Bearbeiten gespeichert"); renderAll(); resetChat(); renderCaptured(); }
+  showView(local.get("agentenwerk.view") === "autopilot" ? "autopilot" : "builder");
 }
 boot();

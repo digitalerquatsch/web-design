@@ -109,6 +109,12 @@ export function toAgentPatch(draft, crawl) {
       pages: crawl.pages.map((p) => ({ url: p.url, title: p.title })),
       failed: crawl.failed,
       missing: draft.missing.slice(0, 8),
+      // What the demo page shows when there is no screenshot.
+      preview: {
+        title: crawl.meta.siteName || crawl.meta.title || patch.company,
+        description: crawl.meta.description || "",
+        headings: crawl.meta.headings || [],
+      },
     },
   };
 }

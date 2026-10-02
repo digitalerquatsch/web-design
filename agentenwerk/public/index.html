@@ -19,8 +19,13 @@
 
 <div id="appRoot" hidden>
   <header class="top">
-    <div class="brand"><div class="brand-mark" aria-hidden="true">A</div><h1>Agentenwerk</h1></div>
-    <div class="agent-switch">
+    <div class="brand"><div class="brand-mark" aria-hidden="true">A</div><h1>Agentenwerk</h1>
+      <div class="seg views" role="tablist" aria-label="Ansicht">
+        <button type="button" role="tab" id="vBuilder" aria-pressed="true">Builder</button>
+        <button type="button" role="tab" id="vAutopilot" aria-pressed="false">Autopilot</button>
+      </div>
+    </div>
+    <div class="agent-switch" id="agentSwitch">
       <label for="agentSelect" class="hint">Agent</label>
       <select id="agentSelect"></select>
       <button class="btn" id="newBtn" type="button">+ Neuer Agent</button>
@@ -28,6 +33,8 @@
     </div>
   </header>
   <div class="banner" id="banner" hidden></div>
+
+  <section class="autopilot" id="autopilotView" hidden></section>
 
   <main class="bench" id="bench" data-mview="build">
     <div class="mobile-tabs" role="tablist">

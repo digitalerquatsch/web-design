@@ -179,6 +179,8 @@
     form.addEventListener("submit", function (e) { e.preventDefault(); var v = input.value.trim(); input.value = ""; send(v); });
     panel.addEventListener("keydown", function (e) { if (e.key === "Escape") toggle(false); });
     showWelcome();
+    // data-open="1" opens the chat by itself (used by the demo pages), not on phones.
+    if (script.getAttribute("data-open") === "1" && window.matchMedia("(min-width: 641px)").matches) setTimeout(function () { if (panel.hidden) toggle(true); }, 1200);
   }
 
   fetch(api).then(function (r) { return r.ok ? r.json() : null; }).then(function (cfg) {
