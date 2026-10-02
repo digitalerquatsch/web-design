@@ -112,6 +112,14 @@ test("first admin, approval, roles, customers, last-admin guard", async () => {
   const karlAgents = (await karl("GET", "/api/agents")).body;
   assert.deepEqual(karlAgents.map((a) => a.id), [a1.id]);
   assert.equal((await karl("GET", `/api/agents/${a2.id}`)).status, 404);
+  const ov = (await karl("GET", "/api/overview")).body;
+  assert.equal(ov.agents, 1, "start page counts only the customer's agents");
+  assert.equal(ov.leads, undefined, "customers see no acquisition numbers");
+  assert.equal(ov.recentAgents[0].id, a1.id);
+  const adminOv = (await admin("GET", "/api/overview")).body;
+  assert.equal(adminOv.agents, 2);
+  assert.equal(adminOv.leads.total, 0);
+  assert.equal(typeof adminOv.pendingUsers, "number");
   assert.equal((await karl("PUT", `/api/agents/${a1.id}`, { ...a1, name: "Mein Bot" })).body.name, "Mein Bot");
   assert.equal((await karl("DELETE", `/api/agents/${a1.id}`)).status, 403);
   assert.equal((await karl("GET", "/api/leads")).status, 403);

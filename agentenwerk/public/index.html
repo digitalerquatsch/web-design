@@ -10,29 +10,37 @@
 <body>
 <div id="gate" hidden></div>
 
-<div id="appRoot" hidden>
-  <header class="top">
-    <div class="brand"><div class="brand-mark" aria-hidden="true">A</div><h1>Agentenwerk</h1>
-      <div class="seg views" role="tablist" aria-label="Ansicht">
-        <button type="button" role="tab" id="vBuilder" aria-pressed="true">Builder</button>
-        <button type="button" role="tab" id="vAutopilot" aria-pressed="false">Autopilot</button>
-        <button type="button" role="tab" id="vAcquisition" aria-pressed="false">Akquise</button>
-        <button type="button" role="tab" id="vUsers" aria-pressed="false" hidden>Nutzer<span class="count" id="pendingCount" hidden></span></button>
-      </div>
+<div id="appRoot" class="shell" hidden>
+  <aside class="sidenav" id="sidenav" aria-label="Hauptmenü">
+    <div class="sidenav-head">
+      <div class="brand"><div class="brand-mark" aria-hidden="true">A</div><span class="brand-name">Agenten<b>werk</b></span></div>
+      <button type="button" class="icon-btn nav-close" id="navClose" aria-label="Menü schließen"></button>
     </div>
-    <div class="agent-switch" id="agentSwitch">
-      <label for="agentSelect" class="hint">Agent</label>
-      <select id="agentSelect"></select>
-      <button class="btn" id="newBtn" type="button">+ Neuer Agent</button>
-      <span class="save-state" id="saveState" data-s="example">Neu</span>
-    </div>
-    <div class="me" id="meBox"></div>
-  </header>
-  <div class="banner" id="banner" hidden></div>
+    <nav class="navlist" id="navList"></nav>
+    <div class="sidenav-foot" id="navFoot"></div>
+  </aside>
+  <div class="nav-backdrop" id="navBackdrop" hidden></div>
 
-  <section class="autopilot" id="autopilotView" hidden></section>
-  <section class="acquisition" id="acquisitionView" hidden></section>
-  <section class="acquisition" id="usersView" hidden></section>
+  <div class="main">
+    <header class="top">
+      <button type="button" class="icon-btn nav-open" id="navOpen" aria-label="Menü öffnen" aria-controls="sidenav" aria-expanded="false"></button>
+      <h1 class="page-title" id="pageTitle">Start</h1>
+      <div class="agent-switch" id="agentSwitch">
+        <label for="agentSelect" class="hint">Agent</label>
+        <select id="agentSelect"></select>
+        <button class="btn" id="newBtn" type="button">+ Neuer Agent</button>
+        <span class="save-state" id="saveState" data-s="example">Neu</span>
+      </div>
+      <div class="me" id="meBox"></div>
+      <button type="button" class="icon-btn" id="logoutTop" aria-label="Abmelden" title="Abmelden"></button>
+    </header>
+    <div class="banner" id="banner" hidden></div>
+
+    <section class="page" id="homeView" hidden></section>
+    <section class="page" id="agentsView" hidden></section>
+    <section class="autopilot page" id="autopilotView" hidden></section>
+    <section class="acquisition page" id="acquisitionView" hidden></section>
+    <section class="acquisition page" id="usersView" hidden></section>
 
   <main class="bench" id="bench" data-mview="build">
     <div class="mobile-tabs" role="tablist">
@@ -66,6 +74,7 @@
       <div id="capView" class="panel captured" hidden></div>
     </aside>
   </main>
+  </div>
 </div>
 <script type="module" src="/app.js"></script>
 </body>

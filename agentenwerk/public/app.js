@@ -5,6 +5,9 @@ import { mountAutopilot } from "./autopilot.js";
 import { mountAcquisition } from "./acquisition.js";
 import { mountUsers } from "./users.js";
 import { renderAuth } from "./auth.js";
+import { mountHome } from "./home.js";
+import { mountAgents } from "./agents.js";
+import { icon } from "./icons.js";
 import { TEMPLATES, TONES, GOALS, LEAD_FIELDS, COLORS, fromTemplate, withDefaults, buildPrompt, activePrompt } from "./prompt.js";
 
 /* ---------- helpers ---------- */
@@ -195,14 +198,16 @@ $("agentSelect").addEventListener("change", async (e) => {
   const a = agents.find((x) => x.id === e.target.value);
   if (a) loadAgent(a);
 });
-$("newBtn").addEventListener("click", async () => {
+async function newAgent() {
   if (cfg.id) await flush();
   cfg = fromTemplate("blank");
   section = "basis"; importState = null; pendingTemplate = null;
   setSave("example", "Neu · wird beim ersten Bearbeiten gespeichert");
+  if (typeof showView === "function" && currentView !== "builder") showView("builder");
   renderAll(); resetChat(); watchCaptured();
   $("f_importUrl")?.focus();
-});
+}
+$("newBtn").addEventListener("click", newAgent);
 
 /* ---------- form controls bound to cfg ---------- */
 function changed(opts = {}) {
@@ -717,37 +722,67 @@ async function openAgentById(id) {
 const autopilotView = mountAutopilot({ root: $("autopilotView"), api, h, headers, getStatus: () => status, openAgent: openAgentById });
 const acquisitionView = mountAcquisition({ root: $("acquisitionView"), api, h, getStatus: () => status, openAgent: openAgentById });
 const usersView = mountUsers({ root: $("usersView"), api, h, getStatus: () => status, onChange: refreshStatus });
-const VIEWS = { builder: "vBuilder", autopilot: "vAutopilot", acquisition: "vAcquisition", users: "vUsers" };
-const viewAllowed = (v) => v === "builder" || (v === "users" ? me().role === "admin" : !isKunde());
+const homeView = mountHome({ root: $("homeView"), api, h, icon, getStatus: () => status, go: (v) => showView(v), onNew: newAgent, onEdit: openAgentById });
+const agentsView = mountAgents({ root: $("agentsView"), api, h, icon, getStatus: () => status, onNew: newAgent, onEdit: openAgentById });
+
+// Navigation: one entry per page, filtered by role.
+const PAGES = [
+  { id: "home", label: "Start", icon: "home", el: "homeView", ctl: homeView },
+  { id: "agents", label: "Agenten", icon: "bot", el: "agentsView", ctl: agentsView },
+  { id: "builder", label: "Editor", icon: "edit", el: "bench" },
+  { id: "autopilot", label: "Autopilot", icon: "upload", el: "autopilotView", ctl: autopilotView, staff: true },
+  { id: "acquisition", label: "Akquise", icon: "send", el: "acquisitionView", ctl: acquisitionView, staff: true, glow: true },
+  { id: "users", label: "Nutzer", icon: "users", el: "usersView", ctl: usersView, admin: true },
+];
+let currentView = "home";
+const viewAllowed = (v) => {
+  const p = PAGES.find((x) => x.id === v);
+  if (!p) return false;
+  if (p.admin) return me().role === "admin";
+  if (p.staff) return !isKunde();
+  return true;
+};
+function renderNav() {
+  const list = $("navList");
+  list.replaceChildren(...PAGES.filter((p) => viewAllowed(p.id)).map((p) => {
+    const b = h("button", { type: "button", class: "nav-item" + (p.glow ? " glow" : ""), "aria-current": p.id === currentView ? "page" : null, onclick: () => { showView(p.id); closeNav(); } },
+      icon(p.icon, 20), h("span", { text: p.label }));
+    if (p.id === "users" && status.pendingUsers) b.append(h("span", { class: "count", text: String(status.pendingUsers) }));
+    return b;
+  }));
+  $("navFoot").replaceChildren(h("button", { type: "button", class: "nav-item", onclick: logout }, icon("logout", 20), h("span", { text: "Abmelden" })));
+}
+function openNav() { $("sidenav").classList.add("open"); $("navBackdrop").hidden = false; $("navOpen").setAttribute("aria-expanded", "true"); $("navClose").focus(); }
+function closeNav() { $("sidenav").classList.remove("open"); $("navBackdrop").hidden = true; $("navOpen").setAttribute("aria-expanded", "false"); }
+$("navOpen").append(icon("menu", 22));
+$("navClose").append(icon("close", 22));
+$("logoutTop").append(icon("logout", 20));
+$("navOpen").addEventListener("click", openNav);
+$("navClose").addEventListener("click", closeNav);
+$("navBackdrop").addEventListener("click", closeNav);
+$("logoutTop").addEventListener("click", logout);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && $("sidenav").classList.contains("open")) closeNav(); });
+
 async function refreshStatus() {
   try { status = await api("GET", "/api/status"); } catch { return; }
-  const n = status.pendingUsers || 0;
-  $("pendingCount").hidden = !n;
-  $("pendingCount").textContent = String(n);
+  renderNav();
 }
 function showView(v) {
-  if (!VIEWS[v] || !viewAllowed(v)) v = "builder";
-  $("vAutopilot").hidden = !viewAllowed("autopilot");
-  $("vAcquisition").hidden = !viewAllowed("acquisition");
-  $("vUsers").hidden = !viewAllowed("users");
-  $("usersView").hidden = v !== "users";
-  if (v === "users") usersView.show();
-  for (const [name, btn] of Object.entries(VIEWS)) $(btn).setAttribute("aria-pressed", String(name === v));
-  $("autopilotView").hidden = v !== "autopilot";
-  $("acquisitionView").hidden = v !== "acquisition";
-  $("bench").hidden = v !== "builder";
+  if (!viewAllowed(v)) v = "home";
+  const prev = PAGES.find((p) => p.id === currentView);
+  if (prev?.ctl && prev.id !== v) prev.ctl.hide();
+  currentView = v;
+  for (const p of PAGES) $(p.el).hidden = p.id !== v;
   $("agentSwitch").hidden = v !== "builder";
-  if (v === "autopilot") autopilotView.show(); else autopilotView.hide();
-  if (v === "acquisition") acquisitionView.show(); else acquisitionView.hide();
+  const page = PAGES.find((p) => p.id === v);
+  $("pageTitle").textContent = page.label;
+  document.title = `${page.label} · Agentenwerk`;
+  page.ctl?.show();
+  if (v === "builder") api("GET", "/api/agents").then((a) => { agents = a; renderAgentSelect(); }).catch(() => {});
+  renderNav();
   local.set("agentenwerk.view", v);
+  window.scrollTo(0, 0);
 }
-$("vBuilder").addEventListener("click", async () => {
-  showView("builder");
-  try { agents = await api("GET", "/api/agents"); renderAgentSelect(); } catch { /* keep list */ }
-});
-$("vAutopilot").addEventListener("click", () => showView("autopilot"));
-$("vAcquisition").addEventListener("click", () => showView("acquisition"));
-$("vUsers").addEventListener("click", () => showView("users"));
 
 /* ---------- boot ---------- */
 function renderAll() { renderRail(); renderForm(); applyWidgetLook(); renderAgentSelect(); }
@@ -772,6 +807,6 @@ async function boot() {
   banner.hidden = !notes.length;
   if (agents.length) loadAgent(agents[0]);
   else { cfg = fromTemplate("blank"); setSave("example", "Neu · wird beim ersten Bearbeiten gespeichert"); renderAll(); resetChat(); renderCaptured(); }
-  showView(local.get("agentenwerk.view") || "builder");
+  showView(local.get("agentenwerk.view") || "home");
 }
 boot();

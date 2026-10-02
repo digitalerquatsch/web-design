@@ -159,7 +159,7 @@ export function allowed(user, method, path) {
   if (/^\/api\/(users|auth\/config)/.test(path)) return false;
   if (user.role === "team") return true;
   // kunde
-  if (path === "/api/status" || path === "/api/me" || path === "/api/auth/password") return true;
+  if (path === "/api/status" || path === "/api/overview" || path === "/api/auth/password") return true;
   if (path === "/api/agents") return method === "GET";
   if (path === "/api/test-chat") return method === "POST";
   const m = path.match(/^\/api\/agents\/[\w-]+(\/[a-z-]+)?$/);

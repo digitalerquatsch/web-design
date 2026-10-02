@@ -14,6 +14,17 @@ Ein No-Code-Builder für Website-Chatbots. Du gibst deine Website-Adresse ein. A
 - **KI aus der EU:** Standard ist Mistral AI (Sitz Paris). Claude von Anthropic ist als Alternative einstellbar.
 - **Widget zum Einbinden:** ein Script-Tag, Darstellung im Shadow DOM (die CSS deiner Seite stört nicht), mobil im Vollbild. Optional nur für freigegebene Domains.
 
+## Aufbau der Oberfläche
+
+Links steht eine Navigation, auf dem Handy über den Menü-Button oben links:
+
+- **Start:** Begrüßung, *ein* nächster Schritt passend zum Stand (z. B. „2 Anfragen warten“, „Bau deine erste Demo“, „3 Betriebe haben die Demo geöffnet“), Kennzahlen-Cards (Agenten, Demos geöffnet/verschickt, Gespräche, Leads aus Chats), „Dein Weg zum ersten Kunden“ in 8 Stationen, Schnellzugriffe und die zuletzt bearbeiteten Agenten.
+- **Agenten:** alle Agenten als Cards mit Typ (Termin-, Service-, Lead-, Berater-Agent), Firma, Modell, „Aus Website“/„Demo“ und den Buttons Demo und Bearbeiten.
+- **Editor:** der Builder für den gewählten Agenten.
+- **Autopilot**, **Akquise**, **Nutzer:** wie oben beschrieben.
+
+Kunden sehen nur Start, Agenten und Editor.
+
 ## Design
 
 Die Oberfläche ist bewusst dunkel mit Neon-Pink als einziger Akzentfarbe: Cards mit leichtem Glanz, leuchtende Primär-Buttons, Fokus-Rahmen und Datenbalken in Pink. Die Farben stehen als Variablen oben in `public/app.css` (`--accent` ist das Pink). Widget, Demo-Seiten und Abmeldeseite bleiben hell und in den Farben der jeweiligen Firma, weil Endkunden sie sehen.
@@ -151,7 +162,10 @@ src/users.js         Konten, Passwörter (scrypt), Sitzungen, Rollen und Rechte
 src/store.js         JSON-Dateien mit atomaren Schreibvorgängen
 src/security.js      Admin-Prüfung, Rate-Limit, erlaubte Domains
 public/prompt.js     Vorlagen und Prompt-Generator (Browser und Server)
-public/app.js        Builder-Oberfläche
+public/app.js        App-Rahmen (Navigation, Anmeldung) und Builder
+public/home.js       Startseite
+public/agents.js     Agenten-Übersicht (Cards)
+public/icons.js      Linien-Icons
 public/autopilot.js  Autopilot-Oberfläche
 public/acquisition.js Akquise-Dashboard
 public/users.js      Nutzerverwaltung (Cards)

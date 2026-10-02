@@ -153,6 +153,41 @@ export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl 
     }
   }
 
+  /* ---------- start page ---------- */
+
+  // Numbers for the start page, scoped to what this user may see.
+  async function overview(me) {
+    const agents = await store.list("agents", (a) => ownsAgent(me, a.id));
+    const ids = new Set(agents.map((a) => a.id));
+    const convs = await store.list("conversations", (c) => ids.has(c.agentId));
+    const captured = await store.list("captured", (c) => ids.has(c.agentId) && !c.test);
+    const out = {
+      agents: agents.length,
+      imported: agents.filter((a) => a.source).length,
+      conversations: convs.filter((c) => !c.test).length,
+      testConversations: convs.filter((c) => c.test).length,
+      captured: captured.length,
+      recentAgents: agents.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, 6).map((a) => ({
+        id: a.id, name: a.name, company: a.company, goal: a.goal, color: a.color, updatedAt: a.updatedAt, fromWebsite: Boolean(a.source), demo: Boolean(a.batchId),
+      })),
+    };
+    if (me.role !== "kunde") {
+      const leads = await store.list("leads");
+      out.batches = (await store.list("batches")).length;
+      out.leads = {
+        total: leads.length,
+        contacted: leads.filter((l) => l.sent.length).length,
+        drafts: leads.filter((l) => l.stage === "entwurf").length,
+        viewed: leads.filter((l) => l.events.some((e) => e.type === "demo_view")).length,
+        demoChats: leads.filter((l) => l.events.some((e) => e.type === "demo_chat")).length,
+        interested: leads.filter((l) => l.stage === "interessiert").length,
+        customers: leads.filter((l) => l.stage === "kunde").length,
+      };
+    }
+    if (me.role === "admin") out.pendingUsers = (await auth.users()).filter((u) => u.status === "pending").length;
+    return out;
+  }
+
   /* ---------- accounts ---------- */
 
   const sessionToken = (req) => parseCookies(req.headers.cookie)[COOKIE] || "";
@@ -304,6 +339,7 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
       const pending = me.role === "admin" ? (await auth.users()).filter((u) => u.status === "pending").length : 0;
       return send(res, 200, { aiConfigured: ai.configured, provider: ai.provider || "", keyName: ai.keyName || "KI-Schlüssel", model: ai.model, publicUrl: baseUrl(req), screenshots: Boolean(screenshotter), steps: ROW_STEPS, me: publicUser(me), pendingUsers: pending, accounts: (await auth.count()) > 0 });
     }
+    if (p === "/api/overview" && req.method === "GET") return send(res, 200, await overview(me));
     if (p === "/api/auth/password" && req.method === "POST") {
       if (["token", "local"].includes(me.id)) throw new HttpError(400, "Dieser Zugang hat kein Passwort.");
       const body = await readJson(req, 10_000);
