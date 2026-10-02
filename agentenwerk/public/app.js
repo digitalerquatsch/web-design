@@ -2,6 +2,7 @@
 // rendered from agent data goes through textContent, never innerHTML.
 
 import { mountAutopilot } from "./autopilot.js";
+import { mountAcquisition } from "./acquisition.js";
 import { TEMPLATES, TONES, GOALS, LEAD_FIELDS, COLORS, fromTemplate, withDefaults, buildPrompt, activePrompt } from "./prompt.js";
 
 /* ---------- helpers ---------- */
@@ -311,7 +312,7 @@ function importBox() {
     h("h3", { text: "Aus deiner Website erstellen" }),
     h("p", { text: "Gib deine Adresse ein. Der Agent liest Startseite, Kontakt, Leistungen, Preise und FAQ, übernimmt die Fakten und schlägt passende Fragen für deine Besucher vor." }),
     form);
-  if (!status.aiConfigured) box.append(h("div", { class: "err-box", text: "Für das Einlesen fehlt ANTHROPIC_API_KEY in der .env des Servers." }));
+  if (!status.aiConfigured) box.append(h("div", { class: "err-box", text: `Für das Einlesen fehlt ${status.keyName} in der .env des Servers.` }));
 
   if (st && (st.running || st.log.length)) {
     const list = h("ul", { class: "progress" });
@@ -667,23 +668,24 @@ $("mTest").addEventListener("click", () => mobileView("test"));
 window.addEventListener("beforeunload", () => { if (saveEl.dataset.s === "saving") flush(); });
 
 /* ---------- views ---------- */
-const autopilotView = mountAutopilot({
-  root: $("autopilotView"), api, h, headers, getStatus: () => status,
-  openAgent: async (id) => {
-    await flush();
-    try { agents = await api("GET", "/api/agents"); } catch { return; }
-    const a = agents.find((x) => x.id === id);
-    if (a) { showView("builder"); section = "basis"; loadAgent(a); }
-  },
-});
+async function openAgentById(id) {
+  await flush();
+  try { agents = await api("GET", "/api/agents"); } catch { return; }
+  const a = agents.find((x) => x.id === id);
+  if (a) { showView("builder"); section = "basis"; loadAgent(a); }
+}
+const autopilotView = mountAutopilot({ root: $("autopilotView"), api, h, headers, getStatus: () => status, openAgent: openAgentById });
+const acquisitionView = mountAcquisition({ root: $("acquisitionView"), api, h, getStatus: () => status, openAgent: openAgentById });
+const VIEWS = { builder: "vBuilder", autopilot: "vAutopilot", acquisition: "vAcquisition" };
 function showView(v) {
-  const auto = v === "autopilot";
-  $("vBuilder").setAttribute("aria-pressed", String(!auto));
-  $("vAutopilot").setAttribute("aria-pressed", String(auto));
-  $("autopilotView").hidden = !auto;
-  $("bench").hidden = auto;
-  $("agentSwitch").hidden = auto;
-  if (auto) autopilotView.show(); else autopilotView.hide();
+  if (!VIEWS[v]) v = "builder";
+  for (const [name, btn] of Object.entries(VIEWS)) $(btn).setAttribute("aria-pressed", String(name === v));
+  $("autopilotView").hidden = v !== "autopilot";
+  $("acquisitionView").hidden = v !== "acquisition";
+  $("bench").hidden = v !== "builder";
+  $("agentSwitch").hidden = v !== "builder";
+  if (v === "autopilot") autopilotView.show(); else autopilotView.hide();
+  if (v === "acquisition") acquisitionView.show(); else acquisitionView.hide();
   local.set("agentenwerk.view", v);
 }
 $("vBuilder").addEventListener("click", async () => {
@@ -691,6 +693,7 @@ $("vBuilder").addEventListener("click", async () => {
   try { agents = await api("GET", "/api/agents"); renderAgentSelect(); } catch { /* keep list */ }
 });
 $("vAutopilot").addEventListener("click", () => showView("autopilot"));
+$("vAcquisition").addEventListener("click", () => showView("acquisition"));
 
 /* ---------- boot ---------- */
 function renderAll() { renderRail(); renderForm(); applyWidgetLook(); renderAgentSelect(); }
@@ -707,9 +710,9 @@ async function boot() {
   $("appRoot").hidden = false;
   const banner = $("banner");
   banner.hidden = status.aiConfigured;
-  banner.textContent = status.aiConfigured ? "" : "ANTHROPIC_API_KEY fehlt in der .env des Servers. Konfigurieren geht, aber Website-Analyse und Testchat antworten erst mit Key.";
+  banner.textContent = status.aiConfigured ? "" : `${status.keyName} fehlt in der .env des Servers. Konfigurieren geht, aber Website-Analyse und Testchat antworten erst mit Schlüssel.`;
   if (agents.length) loadAgent(agents[0]);
   else { cfg = fromTemplate("blank"); setSave("example", "Neu · wird beim ersten Bearbeiten gespeichert"); renderAll(); resetChat(); renderCaptured(); }
-  showView(local.get("agentenwerk.view") === "autopilot" ? "autopilot" : "builder");
+  showView(local.get("agentenwerk.view") || "builder");
 }
 boot();

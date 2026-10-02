@@ -9,6 +9,7 @@ import { checkAdmin, clientIp, RateLimiter, originAllowed } from "./security.js"
 import { withDefaults, publicView } from "../public/prompt.js";
 import { parseTable, mapRows, toCsv, TableError } from "./table.js";
 import { createAutopilot, summarize, ROW_STEPS } from "./autopilot.js";
+import { STAGES, FUNNEL, DEFAULT_SETTINGS, addEvent, summarizeLeads, followUpDue, generateDraft, composeEmail, senderComplete, isEmail } from "./outreach.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(here, "..", "public");
@@ -74,7 +75,7 @@ function sanitizeAgent(input, id) {
   return a;
 }
 
-export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl = crawlSite, analyze = analyzeSite, screenshotter = null, autopilotConcurrency = 2, agency = {} } = {}) {
+export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl = crawlSite, analyze = analyzeSite, screenshotter = null, autopilotConcurrency = 2, agency = {}, mailer = null } = {}) {
   const store = new Store(dataDir);
   const screenshotDir = path.join(dataDir, "screenshots");
   const autopilot = createAutopilot({ store, crawl, analyze, ai, screenshotter, screenshotDir, concurrency: autopilotConcurrency });
@@ -97,7 +98,7 @@ export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl 
 
   // Shared by the public widget and the builder's test chat.
   async function chat(req, res, agent, body, { test = false, corsHeaders = {} } = {}) {
-    if (!ai.configured) throw new HttpError(503, "ANTHROPIC_API_KEY fehlt. Trage ihn in die .env ein und starte den Server neu.");
+    if (!ai.configured) throw new HttpError(503, `${ai.keyName || "Der KI-Schlüssel"} fehlt. Trage ihn in die .env ein und starte den Server neu.`);
     const text = String(body.message || "").trim();
     if (!text) throw new HttpError(400, "Die Nachricht ist leer.");
     if (text.length > MAX_MESSAGE) throw new HttpError(400, `Die Nachricht ist zu lang (höchstens ${MAX_MESSAGE} Zeichen).`);
@@ -108,6 +109,7 @@ export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl 
     if (!conv || conv.agentId !== agent.id) {
       conv = { id: newId(), agentId: agent.id, messages: [], turns: 0, lastAt: Date.now(), test };
       conversations.set(conv.id, conv);
+      if (!test) leadEvent(agent.id, "demo_chat");
     }
     if (conv.turns >= MAX_TURNS) throw new HttpError(429, "Diese Unterhaltung ist sehr lang geworden. Bitte eine neue beginnen.");
     if (conv.busy) throw new HttpError(409, "Die vorige Nachricht wird noch beantwortet.");
@@ -125,6 +127,7 @@ export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl 
         onCapture: async (type, data) => {
           await store.put("captured", { id: newId(), agentId: agent.id, conversationId: conv.id, type, data, test, at: Date.now() });
           out.event("captured", { type });
+          if (!test) leadEvent(agent.id, "demo_lead", { kind: type });
         },
       });
       if (refused) {
@@ -151,10 +154,14 @@ export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl 
     const m = p.match(/^\/api\/agents\/([\w-]+)(\/[a-z-]+)?$/);
 
     if (p === "/api/status" && req.method === "GET") {
-      return send(res, 200, { aiConfigured: ai.configured, model: ai.model, publicUrl: baseUrl(req), screenshots: Boolean(screenshotter), steps: ROW_STEPS });
+      return send(res, 200, { aiConfigured: ai.configured, provider: ai.provider || "", keyName: ai.keyName || "KI-Schlüssel", model: ai.model, publicUrl: baseUrl(req), screenshots: Boolean(screenshotter), steps: ROW_STEPS });
     }
     const b = p.match(/^\/api\/batches(?:\/([\w-]+)(\/[a-z]+)?)?$/);
     if (b) return batchRoute(req, res, url, b[1], b[2]);
+    if (p === "/api/settings") return settingsRoute(req, res);
+    if (p === "/api/acquisition") return send(res, 200, await acquisitionSummary(req));
+    const l = p.match(/^\/api\/leads(?:\/([\w-]+)(\/[a-z-]+)?)?$/);
+    if (l) return leadRoute(req, res, l[1], l[2]);
     if (p === "/api/agents" && req.method === "GET") {
       const agents = await store.list("agents");
       return send(res, 200, agents.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)));
@@ -166,7 +173,7 @@ export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl 
       return send(res, 201, agent);
     }
     if (p === "/api/analyze" && req.method === "POST") {
-      if (!ai.configured) throw new HttpError(503, "ANTHROPIC_API_KEY fehlt. Trage ihn in die .env ein und starte den Server neu.");
+      if (!ai.configured) throw new HttpError(503, `${ai.keyName || "Der KI-Schlüssel"} fehlt. Trage ihn in die .env ein und starte den Server neu.`);
       if (!analyzeLimit.allow(clientIp(req))) throw new HttpError(429, "Zu viele Analysen. Bitte eine Minute warten.");
       const body = await readJson(req);
       const out = sse(res);
@@ -219,6 +226,7 @@ export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl 
     await store.remove("agents", (r) => set.has(r.id));
     await store.remove("captured", (r) => set.has(r.agentId));
     await store.remove("conversations", (r) => set.has(r.agentId));
+    await store.remove("leads", (r) => set.has(r.agentId));
     for (const [cid, c] of conversations) if (set.has(c.agentId)) conversations.delete(cid);
     for (const id of set) await fs.rm(path.join(screenshotDir, `${id}.jpg`), { force: true });
   }
@@ -229,7 +237,7 @@ export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl 
       return send(res, 200, all.map(summarize).sort((a, b) => b.createdAt - a.createdAt));
     }
     if (!id && req.method === "POST") {
-      if (!ai.configured) throw new HttpError(503, "ANTHROPIC_API_KEY fehlt. Trage ihn in die .env ein und starte den Server neu.");
+      if (!ai.configured) throw new HttpError(503, `${ai.keyName || "Der KI-Schlüssel"} fehlt. Trage ihn in die .env ein und starte den Server neu.`);
       const buf = await readRaw(req, 5_000_000);
       let mapped;
       try { mapped = mapRows(parseTable(buf, url.searchParams.get("filename") || "")); } catch (e) {
@@ -274,7 +282,10 @@ export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl 
 
   async function publicRoute(req, res, url) {
     const pv = url.pathname.match(/^\/api\/public\/agents\/([\w-]+)\/(preview|screenshot)$/);
-    if (pv && req.method === "GET") return previewRoute(req, res, pv[1], pv[2]);
+    if (pv && req.method === "GET") return previewRoute(req, res, pv[1], pv[2], url);
+    const un = url.pathname.match(/^\/api\/public\/unsubscribe\/([\w-]{10,})$/);
+    if (un && req.method === "POST") return unsubscribe(res, un[1]);
+    if (un && req.method === "GET") { res.writeHead(302, { location: `/abmelden/${un[1]}` }); return res.end(); }
     const m = url.pathname.match(/^\/api\/public\/agents\/([\w-]+)(\/chat)?$/);
     if (!m) throw new HttpError(404, "Nicht gefunden.");
     const agent = await store.get("agents", m[1]);
@@ -305,11 +316,209 @@ export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl 
     throw new HttpError(405, "Methode nicht erlaubt.");
   }
 
+  /* ---------- acquisition ---------- */
+
+  const tasks = new Set(); // lead ids with a draft or send in progress
+  const DAY = 86_400_000;
+
+  async function getSettings() {
+    const row = await store.get("settings", "main");
+    return { ...DEFAULT_SETTINGS, ...(row || {}), sender: { ...DEFAULT_SETTINGS.sender, ...(row?.sender || {}) } };
+  }
+
+  async function leadEvent(agentId, type, data = {}, dedupeMs = 0) {
+    try {
+      const lead = (await store.list("leads", (x) => x.agentId === agentId))[0];
+      if (!lead) return;
+      const last = [...lead.events].reverse().find((e) => e.type === type);
+      if (dedupeMs && last && Date.now() - last.at < dedupeMs) return;
+      addEvent(lead, type, data);
+      if (type === "demo_view" && lead.stage === "kontaktiert") lead.stage = "angesehen";
+      await store.put("leads", lead);
+    } catch (e) {
+      console.error("lead event:", e?.message || e);
+    }
+  }
+
+  async function sentToday() {
+    const since = Date.now() - DAY;
+    return (await store.list("leads")).reduce((n, l) => n + l.sent.filter((x) => x.at >= since).length, 0);
+  }
+
+  async function acquisitionSummary(req) {
+    const [leads, settings] = await Promise.all([store.list("leads"), getSettings()]);
+    return {
+      stages: STAGES, funnel: FUNNEL,
+      summary: summarizeLeads(leads, settings),
+      mail: { configured: Boolean(mailer), from: mailer?.from || "", dailyLimit: mailer?.dailyLimit || 0, sentToday: await sentToday() },
+      senderMissing: senderComplete(settings.sender),
+      tasks: [...tasks],
+      publicUrl: baseUrl(req),
+    };
+  }
+
+  async function settingsRoute(req, res) {
+    if (req.method === "GET") return send(res, 200, await getSettings());
+    if (req.method !== "PUT") throw new HttpError(405, "Methode nicht erlaubt.");
+    const body = await readJson(req, 20_000);
+    const cur = await getSettings();
+    const str = (v, n = 300) => (typeof v === "string" ? v.trim().slice(0, n) : "");
+    const s = body.sender || {};
+    const next = {
+      id: "main",
+      sender: { name: str(s.name), company: str(s.company), email: str(s.email), phone: str(s.phone), website: str(s.website), address: str(s.address, 500) },
+      followUpDays: Math.max(0, Math.min(30, Number(body.followUpDays ?? cur.followUpDays) || 0)),
+      pitch: str(body.pitch, 400),
+    };
+    if (next.sender.email && !isEmail(next.sender.email)) throw new HttpError(400, "Die Absender-E-Mail ist ungültig.");
+    await store.put("settings", next);
+    return send(res, 200, next);
+  }
+
+  function leadView(lead, settings) {
+    const { unsubToken, ...rest } = lead;
+    return { ...rest, followUpDue: followUpDue(lead, settings), busy: tasks.has(lead.id) };
+  }
+
+  async function makeDraft(lead, kind) {
+    const agent = await store.get("agents", lead.agentId);
+    if (!agent) throw new HttpError(404, "Der Agent zu diesem Lead wurde gelöscht.");
+    lead.draft = await generateDraft({ ai, agent, lead, settings: await getSettings(), kind });
+    if (["neu"].includes(lead.stage)) lead.stage = "entwurf";
+    addEvent(lead, "draft", { kind });
+    await store.put("leads", lead);
+  }
+
+  async function sendLead(lead, req) {
+    if (!mailer) throw new HttpError(503, "Kein E-Mail-Versand eingerichtet. Trage SMTP_HOST, SMTP_USER und SMTP_PASS in die .env ein.");
+    const settings = await getSettings();
+    const missing = senderComplete(settings.sender);
+    if (missing.length) throw new HttpError(400, `Bitte zuerst die Absenderangaben ergänzen: ${missing.join(", ")}.`);
+    if (!isEmail(lead.email)) throw new HttpError(400, `${lead.company || "Dieser Lead"} hat keine gültige E-Mail-Adresse.`);
+    if (lead.stage === "abgemeldet" || lead.stage === "kein_interesse") throw new HttpError(400, `${lead.company} möchte keine Nachrichten.`);
+    const blocked = await store.get("blocklist", lead.email.toLowerCase());
+    if (blocked) throw new HttpError(400, `${lead.email} hat sich abgemeldet.`);
+    if (!lead.draft) throw new HttpError(400, "Es gibt noch keinen Entwurf.");
+    if (await sentToday() >= mailer.dailyLimit) throw new HttpError(429, `Tageslimit von ${mailer.dailyLimit} E-Mails erreicht. Morgen geht es weiter.`);
+    const base = baseUrl(req);
+    const unsubscribeUrl = `${base}/abmelden/${lead.unsubToken}`;
+    const text = composeEmail({ draft: lead.draft, sender: settings.sender, demoUrl: `${base}/d/${lead.agentId}`, unsubscribeUrl });
+    await mailer.send({ to: lead.email, subject: lead.draft.subject, text, unsubscribeUrl: `${base}/api/public/unsubscribe/${lead.unsubToken}`, replyTo: settings.sender.email });
+    lead.sent.push({ subject: lead.draft.subject, kind: lead.draft.kind, at: Date.now() });
+    addEvent(lead, "email_sent", { kind: lead.draft.kind });
+    lead.draft = null;
+    if (["neu", "entwurf"].includes(lead.stage)) lead.stage = "kontaktiert";
+    await store.put("leads", lead);
+  }
+
+  // Runs one job per lead in the background, two at a time.
+  function runBulk(ids, job) {
+    const queue = ids.filter((id) => !tasks.has(id));
+    queue.forEach((id) => tasks.add(id));
+    const worker = async () => {
+      while (queue.length) {
+        const id = queue.shift();
+        try {
+          const lead = await store.get("leads", id);
+          if (lead) await job(lead);
+        } catch (e) {
+          const lead = await store.get("leads", id);
+          if (lead) { addEvent(lead, "error", { message: e instanceof HttpError ? e.message : "Fehlgeschlagen." }); await store.put("leads", lead); }
+          if (e instanceof HttpError && e.status === 429) { queue.forEach((x) => tasks.delete(x)); queue.length = 0; }
+        } finally {
+          tasks.delete(id);
+        }
+      }
+    };
+    Promise.all([worker(), worker()]).catch(() => {});
+    return queue.length;
+  }
+
+  async function leadRoute(req, res, id, sub) {
+    const settings = await getSettings();
+    if (!id && req.method === "GET") {
+      const leads = await store.list("leads");
+      return send(res, 200, leads.sort((a, b) => b.updatedAt - a.updatedAt).map((l) => leadView(l, settings)));
+    }
+    if (id === "bulk" && req.method === "POST") {
+      const body = await readJson(req, 100_000);
+      const ids = (Array.isArray(body.ids) ? body.ids : []).filter((x) => typeof x === "string").slice(0, 500);
+      if (body.action === "draft") {
+        if (!ai.configured) throw new HttpError(503, `${ai.keyName || "Der KI-Schlüssel"} fehlt.`);
+        return send(res, 202, { started: runBulk(ids, (lead) => makeDraft(lead, followUpDue(lead, settings) ? "followup" : "first")) });
+      }
+      if (body.action === "send") {
+        if (!mailer) throw new HttpError(503, "Kein E-Mail-Versand eingerichtet. Trage SMTP_HOST, SMTP_USER und SMTP_PASS in die .env ein.");
+        return send(res, 202, { started: runBulk(ids, async (lead) => { await sendLead(lead, req); await new Promise((r) => setTimeout(r, 1500)); }) });
+      }
+      if (body.action === "stage" && STAGES[body.stage]) {
+        for (const lid of ids) {
+          const lead = await store.get("leads", lid);
+          if (lead) { lead.stage = body.stage; addEvent(lead, "stage", { stage: body.stage }); await store.put("leads", lead); }
+        }
+        return send(res, 200, { updated: ids.length });
+      }
+      throw new HttpError(400, "Unbekannte Aktion.");
+    }
+    const lead = id && await store.get("leads", id);
+    if (!lead) throw new HttpError(404, "Lead nicht gefunden.");
+    if (!sub && req.method === "GET") return send(res, 200, leadView(lead, settings));
+    if (!sub && req.method === "PATCH") {
+      const body = await readJson(req, 50_000);
+      if (typeof body.notes === "string") lead.notes = body.notes.slice(0, 5000);
+      if (typeof body.email === "string") lead.email = body.email.trim().slice(0, 200);
+      if (typeof body.contact === "string") lead.contact = body.contact.trim().slice(0, 200);
+      if (body.stage && STAGES[body.stage] && body.stage !== lead.stage) { lead.stage = body.stage; addEvent(lead, "stage", { stage: body.stage }); }
+      if (body.draft && typeof body.draft.subject === "string" && typeof body.draft.body === "string") {
+        lead.draft = { ...(lead.draft || { kind: "first" }), subject: body.draft.subject.slice(0, 200), body: body.draft.body.slice(0, 8000), at: Date.now() };
+        if (lead.stage === "neu") lead.stage = "entwurf";
+      }
+      lead.updatedAt = Date.now();
+      await store.put("leads", lead);
+      return send(res, 200, leadView(lead, settings));
+    }
+    if (sub === "/draft" && req.method === "POST") {
+      if (!ai.configured) throw new HttpError(503, `${ai.keyName || "Der KI-Schlüssel"} fehlt.`);
+      if (tasks.has(lead.id)) throw new HttpError(409, "Für diesen Lead läuft gerade schon etwas.");
+      const body = await readJson(req);
+      tasks.add(lead.id);
+      try { await makeDraft(lead, body.kind === "followup" ? "followup" : "first"); } finally { tasks.delete(lead.id); }
+      return send(res, 200, leadView(lead, settings));
+    }
+    if (sub === "/send" && req.method === "POST") {
+      if (tasks.has(lead.id)) throw new HttpError(409, "Für diesen Lead läuft gerade schon etwas.");
+      tasks.add(lead.id);
+      try { await sendLead(lead, req); } finally { tasks.delete(lead.id); }
+      return send(res, 200, leadView(lead, settings));
+    }
+    if (sub === "/preview-email" && req.method === "GET") {
+      if (!lead.draft) throw new HttpError(400, "Es gibt noch keinen Entwurf.");
+      const base = baseUrl(req);
+      return send(res, 200, { subject: lead.draft.subject, text: composeEmail({ draft: lead.draft, sender: settings.sender, demoUrl: `${base}/d/${lead.agentId}`, unsubscribeUrl: `${base}/abmelden/${lead.unsubToken}` }) });
+    }
+    throw new HttpError(404, "Nicht gefunden.");
+  }
+
+  async function unsubscribe(res, token) {
+    const lead = (await store.list("leads", (l) => l.unsubToken === token))[0];
+    if (!lead) return send(res, 404, { error: "Dieser Abmeldelink ist ungültig." });
+    if (lead.stage !== "abgemeldet") {
+      lead.stage = "abgemeldet";
+      lead.draft = null;
+      addEvent(lead, "unsubscribed");
+      await store.put("leads", lead);
+    }
+    if (isEmail(lead.email)) await store.put("blocklist", { id: lead.email.toLowerCase(), at: Date.now() });
+    return send(res, 200, { ok: true });
+  }
+
   // Data for the demo page /d/:id. Public on purpose: the link is meant to
   // be sent to the prospect. It holds nothing that is not on their website.
-  async function previewRoute(req, res, id, what) {
+  async function previewRoute(req, res, id, what, url) {
     const agent = await store.get("agents", id);
     if (!agent) return send(res, 404, { error: "Diese Vorschau gibt es nicht (mehr)." });
+    // Count a demo view for the lead, unless it is us opening it from the dashboard.
+    if (what === "preview" && !url.searchParams.has("intern")) leadEvent(agent.id, "demo_view", {}, 30 * 60_000);
     if (what === "screenshot") {
       let img;
       try { img = await fs.readFile(path.join(screenshotDir, `${agent.id}.jpg`)); } catch { throw new HttpError(404, "Kein Screenshot vorhanden."); }
@@ -332,7 +541,10 @@ export function createApp({ dataDir, ai, adminToken = "", publicUrl = "", crawl 
 
   async function staticRoute(req, res, url) {
     if (req.method !== "GET" && req.method !== "HEAD") throw new HttpError(405, "Methode nicht erlaubt.");
-    const rel = url.pathname === "/" ? "index.html" : /^\/d\/[\w-]+\/?$/.test(url.pathname) ? "preview.html" : url.pathname.slice(1);
+    const rel = url.pathname === "/" ? "index.html"
+      : /^\/d\/[\w-]+\/?$/.test(url.pathname) ? "preview.html"
+      : /^\/abmelden\/[\w-]+\/?$/.test(url.pathname) ? "unsubscribe.html"
+      : url.pathname.slice(1);
     const file = path.normalize(path.join(PUBLIC_DIR, rel));
     if (!file.startsWith(PUBLIC_DIR + path.sep)) throw new HttpError(404, "Nicht gefunden.");
     let data;

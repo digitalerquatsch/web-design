@@ -77,7 +77,7 @@ export function mountAutopilot({ root, api, h, headers, getStatus, openAgent }) 
         h("p", { text: "Lade eine Tabelle mit Websites hoch. Für jede Zeile liest der Autopilot die Website, baut einen fertigen Agenten und erstellt eine Demo-Seite, auf der der Chat über der echten Website liegt. Den Link schickst du deinem Kunden." })),
       drop, input,
       h("div", { class: "toolbar" }, name, start),
-      !getStatus().aiConfigured ? h("div", { class: "err-box", text: "ANTHROPIC_API_KEY fehlt in der .env des Servers." }) : null,
+      !getStatus().aiConfigured ? h("div", { class: "err-box", text: `${getStatus().keyName} fehlt in der .env des Servers.` }) : null,
       uploadError ? h("div", { class: uploadError.includes("übersprungen") ? "note" : "err-box", text: uploadError }) : null,
       h("p", { class: "hint" }, "Erkannte Spalten: Website (Pflicht), Firma, Ansprechpartner, E-Mail, Telefon, Ort. ",
         h("button", { type: "button", class: "linkish", text: "Beispiel-Tabelle herunterladen", onclick: () => download("autopilot-beispiel.csv", new Blob(["﻿" + SAMPLE], { type: "text/csv" })) })),

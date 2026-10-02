@@ -51,7 +51,7 @@
   function fail(text) { bar.replaceChildren(el("strong", null, "Vorschau")); stage.replaceChildren(el("p", "msg", text)); }
   if (!id) return fail("Dieser Link ist unvollständig.");
 
-  fetch("/api/public/agents/" + encodeURIComponent(id) + "/preview").then(function (r) {
+  fetch("/api/public/agents/" + encodeURIComponent(id) + "/preview" + (/[?&]intern\b/.test(location.search) ? "?intern=1" : "")).then(function (r) {
     return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || "Diese Vorschau gibt es nicht."); return j; });
   }).then(function (p) {
     var host = "";

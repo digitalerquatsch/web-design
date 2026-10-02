@@ -8,6 +8,7 @@ import path from "node:path";
 import { newId } from "./store.js";
 import { CrawlError } from "./crawl.js";
 import { withDefaults } from "../public/prompt.js";
+import { newLead } from "./outreach.js";
 
 export const ROW_STEPS = {
   queued: "Wartet",
@@ -57,7 +58,7 @@ export function createAutopilot({ store, crawl, analyze, ai, screenshotter = nul
 
   async function processRow(batchId, row) {
     try {
-      if (!ai.configured) throw new CrawlError("ANTHROPIC_API_KEY fehlt in der .env.");
+      if (!ai.configured) throw new CrawlError(`${ai.keyName || "Der KI-Schlüssel"} fehlt in der .env.`);
       await saveRow(batchId, row.id, { status: "crawling", error: "" });
       const site = await crawl(row.url, {});
       if (!site.pages.some((p) => p.text.length > 200)) throw new CrawlError("Kaum Text auf der Website (wird sie per JavaScript aufgebaut?).");
@@ -91,6 +92,10 @@ export function createAutopilot({ store, crawl, analyze, ai, screenshotter = nul
       }
       agent.preview = { screenshot, at: Date.now() };
       await store.put("agents", agent);
+      // Every finished row is a lead in the acquisition dashboard.
+      const known = (await store.list("leads", (l) => l.agentId === agent.id))[0];
+      if (known) Object.assign(known, { company: row.company || agent.company, url: row.url, updatedAt: Date.now() });
+      await store.put("leads", known || newLead({ ...row, company: row.company || agent.company }, agent, batchId));
       await saveRow(batchId, row.id, { status: "done", screenshot, claimed: false });
     } catch (err) {
       const message = err instanceof CrawlError ? err.message : (err?.code === "refusal" ? err.message : "Unerwarteter Fehler bei der Verarbeitung.");

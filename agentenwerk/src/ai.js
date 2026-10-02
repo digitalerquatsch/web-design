@@ -1,14 +1,24 @@
-// The one place that talks to the Claude API. Everything else receives an
-// `ai` object with parse() and stream(), which the tests replace with fakes.
+// Picks the AI provider. Everything else receives an `ai` object with
+// parse() and stream(), which the tests replace with fakes.
+//
+// Default is Mistral AI (EU provider, Paris). Set AI_PROVIDER=anthropic to
+// run on Claude instead.
 
 import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
+import { createMistralAi } from "./ai-mistral.js";
+
+export function createAi(env = process.env) {
+  const provider = (env.AI_PROVIDER || (env.MISTRAL_API_KEY || !env.ANTHROPIC_API_KEY ? "mistral" : "anthropic")).toLowerCase();
+  if (provider === "anthropic" || provider === "claude") return createClaudeAi({ apiKey: env.ANTHROPIC_API_KEY, model: env.AGENT_MODEL || "claude-opus-5-5" });
+  return createMistralAi({ apiKey: env.MISTRAL_API_KEY, model: env.MISTRAL_MODEL || "mistral-medium-latest" });
+}
 
 export class AiError extends Error {
   constructor(message, code) { super(message); this.code = code; }
 }
 
-export function createAi({ apiKey = process.env.ANTHROPIC_API_KEY, model = process.env.AGENT_MODEL || "claude-opus-5-5" } = {}) {
+export function createClaudeAi({ apiKey, model = "claude-opus-5-5" } = {}) {
   const client = new Anthropic(apiKey ? { apiKey } : {});
   // Server-side fallback: if a safety classifier declines a request, the API
   // re-runs it on the model Anthropic recommends for that category instead
@@ -16,6 +26,8 @@ export function createAi({ apiKey = process.env.ANTHROPIC_API_KEY, model = proce
   const base = { model, betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" };
 
   return {
+    provider: "anthropic",
+    keyName: "ANTHROPIC_API_KEY",
     model,
     configured: Boolean(apiKey),
 
