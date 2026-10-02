@@ -770,3 +770,11 @@ button.fnode { cursor: pointer; }
 .ag-menu button.danger { color: var(--danger); }
 .btn.danger { border-color: var(--danger); color: var(--danger); }
 .btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+
+/* Deine Website */
+.ws-img { max-width: 220px; max-height: 140px; border-radius: 12px; border: 1px solid var(--line); background: var(--sunken); object-fit: contain; }
+.swatches { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.swatch { width: 36px; height: 36px; border-radius: 50%; border: 2px solid transparent; }
+.swatch[aria-pressed="true"] { border-color: var(--ink); box-shadow: 0 0 0 2px var(--bg) inset; }
+.swatches input[type=color] { width: 44px; height: 36px; padding: 0; border: 1px solid var(--line); border-radius: 10px; background: none; }
+.msg.ok { color: var(--ok); }

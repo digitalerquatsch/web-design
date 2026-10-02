@@ -11,6 +11,7 @@ import { icon } from "./icons.js";
 import { mountReview } from "./review.js";
 import { mountSystem } from "./system.js";
 import { mountJarvis } from "./jarvis.js";
+import { mountWebsite } from "./website.js";
 import { mountAccount, mountMentoring } from "./account.js";
 import { TEMPLATES, TONES, GOALS, LEAD_FIELDS, COLORS, fromTemplate, withDefaults, buildPrompt, activePrompt } from "./prompt.js";
 
@@ -1000,6 +1001,7 @@ async function seedProjectsAgent() {
 function alert_(text) { const b = $("banner"); b.replaceChildren(h("p", { text })); b.hidden = false; }
 const agentsView = mountAgents({ root: $("agentsView"), api, h, icon, getStatus: () => status, onNew: newAgent, onEdit: openAgentById, onSeed: seedProjectsAgent });
 
+const websiteView = mountWebsite({ root: $("websiteView"), api, h, icon });
 const jarvisView = mountJarvis({ root: $("jarvisView"), api, h, icon });
 const systemView = mountSystem({ root: $("systemView"), api, h, icon, onSaved: refreshStatus });
 const accountView = mountAccount({ root: $("accountView"), api, h, icon, getStatus: () => status });
@@ -1012,6 +1014,7 @@ const PAGES = [
   { id: "builder", label: "Editor", icon: "edit", el: "bench" },
   { id: "autopilot", label: "Autopilot", icon: "upload", el: "autopilotView", ctl: autopilotView, staff: true, locked: true },
   { id: "acquisition", label: "Akquise", icon: "send", el: "acquisitionView", ctl: acquisitionView, staff: true, glow: true, locked: true },
+  { id: "website", label: "Deine Website", icon: "globe", el: "websiteView", ctl: websiteView, staff: true },
   { id: "mentoring", label: "1:1 Mentoring", icon: "spark", el: "mentoringView", ctl: mentoringView, abo: true, glow: true },
   { id: "users", label: "Nutzer", icon: "users", el: "usersView", ctl: usersView, admin: true },
   { id: "jarvis", label: "JARVIS", icon: "rocket", el: "jarvisView", ctl: jarvisView, admin: true },

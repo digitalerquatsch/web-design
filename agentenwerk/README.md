@@ -324,3 +324,7 @@ Im Schritt **Wissen** öffnet „Quellen verwalten“ den Dialog wie bei botbuil
 ## Agentenliste
 
 Jede Karte zeigt, womit der Agent verbunden ist (Wissen, Telefon, Verbindungen). Über ⋮ duplizierst oder löschst du einen Agenten, mit „Auswählen“ löschst du mehrere auf einmal.
+
+## Deine Website (Agentur-Seite)
+
+Unter **Deine Website** baust du eine öffentliche Seite für deine Agentur, erreichbar unter `/s/<adresse>`: Branche, Stil (Signature/Editorial, dunkel/hell, Farbe), Logo, Name und Kontakt, Abschnitt „Über dich“ mit Foto und optional ein Chat-Assistent zum Ausprobieren. Impressum und Datenschutzerklärung gibt es als Entwurf zum Einsetzen (DE/AT/CH); sie sind keine Rechtsberatung. Veröffentlichen geht erst, wenn Adresse, Name, E-Mail und beide Rechtstexte ohne Platzhalter vorliegen. Die Seite wird auf dem Server erzeugt, alle Eingaben werden maskiert, Bilder (PNG/JPEG/WebP, kein SVG) werden im Browser verkleinert und geprüft.

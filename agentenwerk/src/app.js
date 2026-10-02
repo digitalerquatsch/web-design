@@ -11,6 +11,7 @@ import { fromEnv, loadSystem, maskedSystem, applySystemUpdate, SystemError, bill
 import { createStripe, verifyWebhook, BillingError, ACTIVE_BILLING } from "./billing.js";
 import { validTwilioRequest, speakable, phoneGreeting, twiml } from "./voice.js";
 import { sanitizeIntegrations, maskAgent, maskIntegrations, dispatch, deliver, ready as integrationReady, IntegrationError, TYPES as INTEGRATION_TYPES } from "./integrations.js";
+import { sanitizeSite, readiness, legalDrafts, renderSite, renderLegal, decodeImage, SiteError, PAGE_HEADERS, NICHES, COUNTRIES } from "./site.js";
 import { newToken, hashToken, sanitizeSnapshot, STALE_MS } from "./jarvis.js";
 import { createGithub, summarizeProject, GithubError } from "./github.js";
 import { withDefaults, publicView } from "../public/prompt.js";
@@ -565,6 +566,24 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
         plan: { name: sys.planName, price: sys.planPrice },
       });
     }
+    if (p === "/api/site" && req.method === "GET") return send(res, 200, siteView(await store.get("site", ws), req, ws));
+    if (p === "/api/site" && req.method === "PUT") {
+      const body = await readJson(req, 1_500_000);
+      const prev = (await store.get("site", ws)) || { id: ws };
+      let next;
+      try { next = sanitizeSite(body, prev); } catch (e) { if (e instanceof SiteError) throw new HttpError(400, e.message); throw e; }
+      next.id = ws;
+      if (next.slug && (await store.list("site", (x) => x.slug === next.slug && x.id !== ws)).length) throw new HttpError(409, "Diese Adresse ist schon vergeben.");
+      if (next.agentId) { const ag = await store.get("agents", next.agentId); if (!ag || !inWorkspace(ag, ws)) next.agentId = ""; }
+      next.online = body.online === true ? true : body.online === false ? false : Boolean(prev.online);
+      if (next.online) {
+        const missing = readiness(next);
+        if (missing.length) throw new HttpError(400, `Zum Veröffentlichen fehlt noch: ${missing.join(", ")}.`);
+      }
+      await store.put("site", next);
+      return send(res, 200, siteView(next, req, ws));
+    }
+    if (p === "/api/site/legal" && req.method === "GET") return send(res, 200, legalDrafts((await store.get("site", ws)) || sanitizeSite({}, { id: ws })));
     if (p === "/api/jarvis" && req.method === "GET") return send(res, 200, await jarvisView(req));
     if (p === "/api/jarvis/token" && req.method === "POST") {
       const token = newToken();
@@ -812,6 +831,31 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
       return res.end(toCsv(lines));
     }
     throw new HttpError(404, "Nicht gefunden.");
+  }
+
+  function siteView(site, req, ws) {
+    const s = site || sanitizeSite({}, { id: ws });
+    const { logo, photo, ...rest } = s;
+    const img = (x) => (x ? `data:${x.mime};base64,${x.b64}` : "");
+    return { ...rest, logo: img(logo), photo: img(photo), url: s.slug ? `${baseUrl(req)}/s/${s.slug}` : "", missing: readiness(s), niches: Object.fromEntries(Object.entries(NICHES).map(([k, v]) => [k, v.label])), countries: COUNTRIES };
+  }
+
+  async function siteRoute(req, res, url) {
+    if (req.method !== "GET" && req.method !== "HEAD") throw new HttpError(405, "Methode nicht erlaubt.");
+    const m = url.pathname.match(/^\/s\/([a-z0-9-]{3,40})(?:\/(impressum|datenschutz|logo|foto))?\/?$/);
+    const site = m ? (await store.list("site", (x) => x.slug === m[1] && x.online))[0] : null;
+    if (!site) throw new HttpError(404, "Diese Seite gibt es nicht.");
+    const kind = m[2];
+    if (kind === "logo" || kind === "foto") {
+      const img = kind === "logo" ? site.logo : site.photo;
+      if (!img) throw new HttpError(404, "Nicht gefunden.");
+      res.writeHead(200, { "content-type": img.mime, "cache-control": "public, max-age=300", "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'" });
+      return res.end(req.method === "HEAD" ? undefined : Buffer.from(img.b64, "base64"));
+    }
+    const agent = site.agentId ? await store.get("agents", site.agentId) : null;
+    const html = kind ? renderLegal(site, kind) : renderSite(site, { agent: agent && inWorkspace(agent, site.id) ? agent : null });
+    res.writeHead(200, PAGE_HEADERS);
+    res.end(req.method === "HEAD" ? undefined : html);
   }
 
   async function jarvisView(req) {
@@ -1169,6 +1213,7 @@ Viele Grüße`, unsubscribeUrl: `${baseUrl(req)}/` }).catch((e) => console.warn(
     try {
       if (url.pathname.startsWith("/api/public/")) return await publicRoute(req, res, url);
       if (url.pathname.startsWith("/api/")) return await adminRoute(req, res, url);
+      if (url.pathname.startsWith("/s/")) return await siteRoute(req, res, url);
       return await staticRoute(req, res, url);
     } catch (err) {
       if (res.headersSent) return res.end();
